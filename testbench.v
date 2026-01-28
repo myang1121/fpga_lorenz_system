@@ -5,7 +5,7 @@ module testbench();
 	reg clk_50, clk_25, reset;
 	
 	reg [31:0] index;
-	wire signed [15:0]  testbench_out;
+	wire signed [26:0]  testbench_out;
 	
 	//Initialize clocks and index
 	initial begin
@@ -40,22 +40,14 @@ module testbench();
 		index  <= index + 32'd1;
 	end
 
-	//Instantiation of Device Under Test
-	// hook up the sine wave generators
-	DDS DUT   (.clock(clk_50), 
-        .reset(reset),
-		.increment({18'h02000, 14'b0}), 
-		.phase(8'd0),
-		.sine_out(testbench_out));
+	//Instantiation of Integrator module
+	// Function integrated is a constant (ramp, overflow, ramp, overflow, repeat)
+	integrator DUT   (		.out(testbench_out), 
+        					.funct((7'd_1, 20'd_0)),
+							.clk(clk_50), 
+							.reset(reset),
+							.InitialOut(27'd_0));
 
-	// lab1, week 1
-	// 256 entries map to 360 degrees
-	// 90 degrees phase shift = 64
-	DDS DUT_2   (.clock(clk_50), 
-        .reset(reset),
-		.increment({18'h02000, 14'b0}), 
-		.phase(8'd64),
-		.sine_out(testbench_2_out));
 	
 endmodule
 
@@ -74,7 +66,7 @@ module integrator(out,funct,InitialOut,clk,reset);
 	
 	always @ (posedge clk) 
 	begin
-		if (reset==0) //reset	
+		if (reset==1) //reset	
 			v1 <= InitialOut ; // 
 		else 
 			v1 <= v1new ;	

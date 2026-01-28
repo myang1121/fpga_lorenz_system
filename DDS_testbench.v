@@ -42,11 +42,20 @@ module testbench();
 
 	//Instantiation of Device Under Test
 	// hook up the sine wave generators
-DDS DUT   (.clock(clk_50), 
+	DDS DUT   (.clock(clk_50), 
         .reset(reset),
-				.increment({18'h02000, 14'b0}), 
-				.phase(8'd0),
-				.sine_out(testbench_out));
+		.increment({18'h02000, 14'b0}), 
+		.phase(8'd0),
+		.sine_out(testbench_out));
+
+	// lab1, week 1
+	// 256 entries map to 360 degrees
+	// 90 degrees phase shift = 64
+	DDS DUT_2   (.clock(clk_50), 
+        .reset(reset),
+		.increment({18'h02000, 14'b0}), 
+		.phase(8'd64),
+		.sine_out(testbench_2_out));
 	
 endmodule
 

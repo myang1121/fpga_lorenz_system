@@ -42,7 +42,7 @@ module testbench();
 	end
 
 	//Instantiation of Integrator module
-	// Function integrated is a simple harmonic oscillator, the curves are sine wave, and displacement is out of phase with velocity --> no damping, oscillate forever (amplitude grow too, ultimately overflow) (numeric integrator that doesn't conserve energy)
+	// Function integrated is a simple harmonic oscillator w/ damping
 	integrator DUT   (		.x(x_output), 
         					.xdot(xdot_output),
 							.clk(clk_50), // emulated clock 
@@ -56,7 +56,7 @@ endmodule
 //// integrator /////////////////////////////////
 /////////////////////////////////////////////////
 
-// for simple harmonic oscillator F = -kx = m(x_double_dot)
+// for simple harmonic oscillator w/ damping, F = -kx - b(x_dot) = m(x_double_dot)
 module integrator(
 	output wire signed [26:0] x,
 	output wire signed [26:0] xdot,
@@ -82,7 +82,7 @@ module integrator(
 	end
 	// the new values x and xdot can be computed purely as a function of: previous values (xreg, xdotreg) and function of time step --> Euler integration
 	assign xnew = xreg + (xdotreg>>>10) ; // dt chosen to be a power of 2 --> 2^10 = dt = 1024
-	assign xdotnew = xdotreg - (xreg>>>10) ;// new value of derivative given by hooke's law --> -(xreg>>>10) = xdoubledot*dt = (-k/m * x)(dt), let -k/m = 1, then -(xreg>>>10) = -x(1*1024) = -xreg>>>10
+	assign xdotnew = xdotreg - (xreg>>>10) - (xdotreg>>>12);// (restoring + damping)*dt --> - (xreg>>>10) - (xdotreg>>>12), let's say b (damping constant) * dt = 2^12
 
 	// finally, assign the outputs
 	assign x = xreg ; // x will have value in x register

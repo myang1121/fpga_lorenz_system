@@ -6,7 +6,8 @@ module testbench();
 	
 	reg [31:0] index;
 	wire signed [26:0] x_output;
-	wire signed [26:0] xdot_output;
+	wire signed [26:0] y_output;
+	wire signed [26:0] z_output;
 	
 	//Initialize clocks and index
 	initial begin
@@ -42,13 +43,18 @@ module testbench();
 	end
 
 	//Instantiation of Integrator module
-	// Function integrated is a simple harmonic oscillator w/ damping
+	// Function integrated is a Lorenz System
 	integrator DUT   (		.x(x_output), 
-        					.xdot(xdot_output),
+							.y(y_output),
+							.z(z_output),
 							.clk(clk_50), // emulated clock 
 							.reset(reset),
-							.InitialX((7'd_32, 20'd_0)), // lets say initial at 32 (drop from x = 32)
-							.InitialXdot(27'd_0)); // let's say initial at rest (holding oscillator still)
+							.InitialX(27'h7FF_FFFF), // default initial conditions, x(0) = -1 (27'h7FF_FFFF)
+							.InitialY(27'h001999A), // y(0) = 0.1 (27'h001999A)
+							.InitialZ(27'h1900000), // z(0) = 25 (27'h1900000)
+							.sigma(27'h0A00000), // default parameters, sigma = 10 (27'h0A00000)
+							.rho(27'h01C00000), // rho = 28 (27'h01C00000)
+							.beta(27'h02AABAA)); // beta = 8/3 (27'h02AABAA)
 
 endmodule
 
@@ -56,37 +62,60 @@ endmodule
 //// integrator /////////////////////////////////
 /////////////////////////////////////////////////
 
-// for simple harmonic oscillator w/ damping, F = -kx - b(x_dot) = m(x_double_dot)
+// for Lorenz System
 module integrator(
+	// state variables
 	output wire signed [26:0] x,
-	output wire signed [26:0] xdot,
+	output wire signed [26:0] y,
+	output wire signed [26:0] z,
+	// emulated clock
 	input clk,
 	input reset,
+	// initial conditions
 	input wire signed [26:0] InitialX,
-	input wire signed [26:0] InitialXdot
+	input wire signed [26:0] InitialY,
+	input wire signed [26:0] InitialZ,
+	// parameters
+	input wire signed [26:0] sigma,
+	input wire signed [26:0] rho,
+	input wire signed [26:0] beta
+	
 );
 
-	wire signed	[26:0] xnew,  xdotnew ; // these two wires always holding the next value for x and xdot
-	reg signed	[26:0] xreg, xdotreg ;
+	wire signed	[26:0] xnew,  ynew,  znew ; // these wires always holding the next value for state variables x, y, z
+	reg signed	[26:0] xreg, yreg, zreg ;
+	// signed mult output
+	wired signed [26:0] sigma_y_x, x_rho_z, x_y, beta_z ;
 	
 	always @ (posedge clk) 
 	begin
 		if (reset==1) begin //reset	to initial condition
-			xreg <= InitialX ;
-			xdotreg <= InitialXdot ;
+			xreg <= InitialX ; 
+			yreg <= InitialY ; 
+			zreg <= InitialZ ; 
 		end 
-		else begin // otherwise, on every clock edge, update values in xreg, xdotreg
+		else begin // otherwise, on every clock edge, update values in xreg, yreg, zreg
 			xreg <= xnew ;	
-			xdotreg <= xdotnew ;
+			yreg <= ynew ;
+			zreg <= znew ;
 		end
 	end
-	// the new values x and xdot can be computed purely as a function of: previous values (xreg, xdotreg) and function of time step --> Euler integration
-	assign xnew = xreg + (xdotreg>>>10) ; // dt chosen to be a power of 2 --> 2^10 = dt = 1024
-	assign xdotnew = xdotreg - (xreg>>>10) - (xdotreg>>>12);// (restoring + damping)*dt --> - (xreg>>>10) - (xdotreg>>>12), let's say b (damping constant) * dt = 2^12
+	// multiply
+	signed_mult SIGMA_Y_X(sigma_y_x, sigma, yreg - xreg);
+	signed_mult X_RHO_Z(x_rho_z, xreg, rho - zreg); 
+	signed_mult X_Y(x_y, xreg, yreg);
+	signed_mult BETA_Z(beta_z, beta, zreg); 
+
+	// let dt = 1/256 for default value, >>>8 is the same as diving by 256
+	// x(k+1) = x(k) + dt*xdot(k)
+	assign xnew = xreg + (sigma_y_x>>>8) ; 
+	assign ynew = yreg + ((x_rho_z - yreg)>>>8) ; 
+	assign znew = zreg + ((x_y - beta_z)>>>8) ; 
 
 	// finally, assign the outputs
 	assign x = xreg ; // x will have value in x register
-	assign xdot = xdotreg ;
+	assign y = yreg ;
+	assign z = zreg ;
 endmodule
 
 //////////////////////////////////////////////////

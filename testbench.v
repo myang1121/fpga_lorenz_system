@@ -5,7 +5,8 @@ module testbench();
 	reg clk_50, clk_25, reset;
 	
 	reg [31:0] index;
-	wire signed [26:0]  testbench_out;
+	wire signed [26:0] x_output;
+	wire signed [26:0] xdot_output;
 	
 	//Initialize clocks and index
 	initial begin
@@ -41,38 +42,51 @@ module testbench();
 	end
 
 	//Instantiation of Integrator module
-	// Function integrated is a constant (ramp, overflow, ramp, overflow, repeat)
-	integrator DUT   (		.out(testbench_out), 
-        					.funct((7'd_1, 20'd_0)),
-							.clk(clk_50), 
+	// Function integrated is a simple harmonic oscillator, the curves are sine wave, and displacement is out of phase with velocity --> no damping, oscillate forever (amplitude grow too, ultimately overflow) (numeric integrator that doesn't conserve energy)
+	integrator DUT   (		.x(x_output), 
+        					.xdot(xdot_output),
+							.clk(clk_50), // emulated clock 
 							.reset(reset),
-							.InitialOut(27'd_0));
+							.InitialX((7'd_32, 20'd_0)), // lets say initial at 32 (drop from x = 32)
+							.InitialXdot(27'd_0)); // let's say initial at rest (holding oscillator still)
 
-	
 endmodule
 
 /////////////////////////////////////////////////
 //// integrator /////////////////////////////////
 /////////////////////////////////////////////////
 
-module integrator(out,funct,InitialOut,clk,reset);
-	output signed [26:0] out; 		//the state variable V
-	input signed [26:0] funct;      //the dV/dt function
-	input clk, reset;
-	input signed [26:0] InitialOut;  //the initial state variable V
-	
-	wire signed	[26:0] out, v1new ;
-	reg signed	[26:0] v1 ;
+// for simple harmonic oscillator F = -kx = m(x_double_dot)
+module integrator(
+	output wire signed [26:0] x,
+	output wire signed [26:0] xdot,
+	input clk,
+	input reset,
+	input wire signed [26:0] InitialX,
+	input wire signed [26:0] InitialXdot
+);
+
+	wire signed	[26:0] xnew,  xdotnew ; // these two wires always holding the next value for x and xdot
+	reg signed	[26:0] xreg, xdotreg ;
 	
 	always @ (posedge clk) 
 	begin
-		if (reset==1) //reset	
-			v1 <= InitialOut ; // 
-		else 
-			v1 <= v1new ;	
+		if (reset==1) begin //reset	to initial condition
+			xreg <= InitialX ;
+			xdotreg <= InitialXdot ;
+		end 
+		else begin // otherwise, on every clock edge, update values in xreg, xdotreg
+			xreg <= xnew ;	
+			xdotreg <= xdotnew ;
+		end
 	end
-	assign v1new = v1 + funct ;
-	assign out = v1 ;
+	// the new values x and xdot can be computed purely as a function of: previous values (xreg, xdotreg) and function of time step --> Euler integration
+	assign xnew = xreg + (xdotreg>>>10) ; // dt chosen to be a power of 2 --> 2^10 = dt = 1024
+	assign xdotnew = xdotreg - (xreg>>>10) ;// new value of derivative given by hooke's law --> -(xreg>>>10) = xdoubledot*dt = (-k/m * x)(dt), let -k/m = 1, then -(xreg>>>10) = -x(1*1024) = -xreg>>>10
+
+	// finally, assign the outputs
+	assign x = xreg ; // x will have value in x register
+	assign xdot = xdotreg ;
 endmodule
 
 //////////////////////////////////////////////////

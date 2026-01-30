@@ -30,11 +30,10 @@ module testbench();
 	
 	//Intialize and drive signals
 	initial begin
+		#10
 		reset  = 1'b0;
-		#10 
+		#40
 		reset  = 1'b1;
-		#30
-		reset  = 1'b0;
 	end
 	
 	//Increment index
@@ -49,12 +48,12 @@ module testbench();
 							.z(z_output),
 							.clk(clk_50), // emulated clock 
 							.reset(reset),
-							.InitialX(27'h7FF_FFFF), // default initial conditions, x(0) = -1 (27'h7FF_FFFF)
-							.InitialY(27'h001999A), // y(0) = 0.1 (27'h001999A)
-							.InitialZ(27'h1900000), // z(0) = 25 (27'h1900000)
-							.sigma(27'h0A00000), // default parameters, sigma = 10 (27'h0A00000)
-							.rho(27'h01C00000), // rho = 28 (27'h01C00000)
-							.beta(27'h02AABAA)); // beta = 8/3 (27'h02AABAA)
+							.InitialX(27'sb1_111111_00000_00000_00000_00000), // default initial conditions, x(0) = -1 (27'h7FF_FFFF)
+							.InitialY(27'sb0_000000_00011_00110_01100_11010), // y(0) = 0.1 (27'h001999A)
+							.InitialZ(27'sb0_011001_00000_00000_00000_00000), // z(0) = 25 (27'h1900000)
+							.sigma(27'sb0_001010_00000_00000_00000_00000), // default parameters, sigma = 10 (27'h0A00000)
+							.rho(27'sb0_011100_00000_00000_00000_00000), // rho = 28 (27'h01C00000)
+							.beta(27'sb0_000010_10101_01010_10101_01011)); // beta = 8/3 (27'h02AABAA)
 
 endmodule
 
@@ -85,11 +84,11 @@ module integrator(
 	wire signed	[26:0] xnew,  ynew,  znew ; // these wires always holding the next value for state variables x, y, z
 	reg signed	[26:0] xreg, yreg, zreg ;
 	// signed mult output
-	wired signed [26:0] sigma_y_x, x_rho_z, x_y, beta_z ;
+	wire signed [26:0] sigma_y_x, x_rho_z, x_y, beta_z ;
 	
 	always @ (posedge clk) 
 	begin
-		if (reset==1) begin //reset	to initial condition
+		if (reset==0) begin //reset	to initial condition
 			xreg <= InitialX ; 
 			yreg <= InitialY ; 
 			zreg <= InitialZ ; 

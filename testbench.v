@@ -48,12 +48,12 @@ module testbench();
 							.z(z_output),
 							.clk(clk_50), // emulated clock 
 							.reset(reset),
-							.InitialX(27'sb1_111111_00000_00000_00000_00000), // default initial conditions, x(0) = -1 (27'h7FF_FFFF)
-							.InitialY(27'sb0_000000_00011_00110_01100_11010), // y(0) = 0.1 (27'h001999A)
-							.InitialZ(27'sb0_011001_00000_00000_00000_00000), // z(0) = 25 (27'h1900000)
-							.sigma(27'sb0_001010_00000_00000_00000_00000), // default parameters, sigma = 10 (27'h0A00000)
-							.rho(27'sb0_011100_00000_00000_00000_00000), // rho = 28 (27'h01C00000)
-							.beta(27'sb0_000010_10101_01010_10101_01011)); // beta = 8/3 (27'h02AABAA)
+							.InitialX(27'sb1_111111_00000_00000_00000_00000), // default initial conditions, x(0) = -1 
+							.InitialY(27'sb0_000000_00011_00110_01100_11010), // y(0) = 0.1
+							.InitialZ(27'sb0_011001_00000_00000_00000_00000), // z(0) = 25 
+							.sigma(27'sb0_001010_00000_00000_00000_00000), // default parameters, sigma = 10
+							.rho(27'sb0_011100_00000_00000_00000_00000), // rho = 28 
+							.beta(27'sb0_000010_10101_01010_10101_01011)); // beta = 8/3 
 
 endmodule
 
@@ -84,7 +84,7 @@ module integrator(
 	wire signed	[26:0] xnew,  ynew,  znew ; // these wires always holding the next value for state variables x, y, z
 	reg signed	[26:0] xreg, yreg, zreg ;
 	// signed mult output
-	wire signed [26:0] sigma_y_x, x_rho_z, x_y, beta_z ;
+	wire signed [26:0] sigma_y_x_dt, x_rho_z_dt, x_y_dt, beta_z_dt ; // sigma_y_x_dt instead of sigma_y_x to prevent overflow +/- 63
 	
 	always @ (posedge clk) 
 	begin
@@ -100,16 +100,16 @@ module integrator(
 		end
 	end
 	// multiply
-	signed_mult SIGMA_Y_X(sigma_y_x, sigma, yreg - xreg);
-	signed_mult X_RHO_Z(x_rho_z, xreg, rho - zreg); 
-	signed_mult X_Y(x_y, xreg, yreg);
-	signed_mult BETA_Z(beta_z, beta, zreg); 
+	signed_mult SIGMA_Y_X_DT(sigma_y_x_dt, sigma, (yreg - xreg)>>>8);
+	signed_mult X_RHO_Z_DT(x_rho_z_dt, xreg, (rho - zreg)>>>8); 
+	signed_mult X_Y_DT(x_y_dt, xreg, yreg>>>8);
+	signed_mult BETA_Z_DT(beta_z_dt, beta, zreg>>>8); 
 
 	// let dt = 1/256 for default value, >>>8 is the same as diving by 256
 	// x(k+1) = x(k) + dt*xdot(k)
-	assign xnew = xreg + (sigma_y_x>>>8) ; 
-	assign ynew = yreg + ((x_rho_z - yreg)>>>8) ; 
-	assign znew = zreg + ((x_y - beta_z)>>>8) ; 
+	assign xnew = xreg + sigma_y_x_dt ; 
+	assign ynew = yreg + (x_rho_z_dt - (yreg>>>8)) ; 
+	assign znew = zreg + (x_y_dt - beta_z_dt) ; 
 
 	// finally, assign the outputs
 	assign x = xreg ; // x will have value in x register

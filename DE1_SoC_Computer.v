@@ -372,11 +372,15 @@ HexDigit Digit1(HEX1, hex3_hex0[7:4]);
 HexDigit Digit2(HEX2, hex3_hex0[11:8]);
 HexDigit Digit3(HEX3, hex3_hex0[15:12]);
 
+wire signed [26:0] x_output ;
+wire signed [26:0] y_output ;
+wire signed [26:0] z_output ;
+
 integrator DUT   (		.x(x_output), 
 							   .y(y_output),
 							   .z(z_output),
-							   .clk(clk_50), // emulated clock 
-							   .reset(reset),
+							   .clk(CLOCK_50), // connect to pio port as oppose to hard ware 50Mhz clock 
+							   .reset(~KEY[0]), // connect to pio port where ARM processor reset verilog from software as oppose to button push
 							   .InitialX(27'sb1_111111_00000_00000_00000_00000), // default initial conditions, x(0) = -1 
 							   .InitialY(27'sb0_000000_00011_00110_01100_11010), // y(0) = 0.1
 							   .InitialZ(27'sb0_011001_00000_00000_00000_00000), // z(0) = 25 
@@ -386,7 +390,7 @@ integrator DUT   (		.x(x_output),
 //=======================================================
 //  Structural coding
 //=======================================================
-
+// From Qsys
 Computer_System The_System (
 	////////////////////////////////////
 	// FPGA Side
@@ -395,6 +399,11 @@ Computer_System The_System (
 	// Global signals
 	.system_pll_ref_clk_clk					(CLOCK_50),
 	.system_pll_ref_reset_reset			(1'b0),
+
+	////////////////////////////////////
+	// PIO ports
+	////////////////////////////////////
+
 
 	// AV Config
 	.av_config_SCLK							(FPGA_I2C_SCLK),

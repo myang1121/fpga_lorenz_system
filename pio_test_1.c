@@ -32,17 +32,11 @@ void *h2p_lw_virtual_base;
 // HPS_to_FPGA FIFO status address = 0
 volatile unsigned int * lw_pio_ptr = NULL ;
 volatile unsigned int * lw_pio_read_ptr = NULL ;
-volatile unsigned int * pio_clk_ptr = NULL ;
-volatile unsigned int * pio_rst_ptr = NULL ;
 
 // read offset is 0x10 for both busses
 // remember that eaxh axi master bus needs unique address
 #define FPGA_PIO_READ	0x10
 #define FPGA_PIO_WRITE	0x00
-#define CLK_PIO 0x20
-#define RESET_PIO 0x30
-
-
 
 
 // /dev/mem file id
@@ -74,9 +68,6 @@ int main(void)
 	// Get the addresses that map to the two parallel ports on the light-weight bus
 	lw_pio_ptr = (unsigned int *)(h2p_lw_virtual_base);
 	lw_pio_read_ptr = (unsigned int *)(h2p_lw_virtual_base + FPGA_PIO_READ);
-	pio_clk_ptr = (unsigned int *)(h2p_lw_virtual_base + CLK_PIO);
-	pio_clk_ptr = (unsigned int *)(h2p_lw_virtual_base + RESET_PIO);
-
 	
 	//============================================
 	
@@ -106,24 +97,8 @@ int main(void)
 		*(lw_pio_ptr)  = num ;
 		*(axi_pio_ptr) = num ;
 		
-		
 		// receive back and print
 		printf("pio in=%d %d\n\r", *(lw_pio_read_ptr), *(axi_pio_read_ptr)) ;
-
-		int input_buffer;
-		printf("Default values? (y): ") ;
-		j = scanf("%s", input_buffer) ;
-		// reset
-		*pio_clk_ptr = 0 ;
-		*pio_reset_ptr = 0 ;
-		*pio_reset_ptr = 1 ;
-		*pio_clk_ptr = 1 ;
-		*pio_clk_ptr = 0 ;
-		*pio_reset_ptr = 0 ;
-
-		// clock the integrator
-		
-
 		
 	} // end while(1)
 } // end main

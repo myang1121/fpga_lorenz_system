@@ -380,15 +380,15 @@ wire signed [26:0] z_output ;
 //  PIO state machine
 //=======================================================
 // OUTPUTS from the FPGA, INPUT to HPS
-wire [31:0] pp_in_lw_axi_x, pp_in_lw_axi_y, pp_in_lw_axi_z ;
+wire [31:0] pp_in_axi_x, pp_in_axi_y, pp_in_axi_z ;
 // INPUTS to the FPGA, OUTPUT from HPS
 wire [31:0] pp_out_lw_axi_clock, pp_out_lw_axi_reset ;
 wire [31:0] pp_out_lw_axi_sigma, pp_out_lw_axi_rho, pp_out_lw_axi_beta ; // parameters
 wire [31:0] pp_out_lw_axi_x0, pp_out_lw_axi_y0, pp_out_lw_axi_z0 ; // initial conditions
 
-assign pp_in_lw_axi_x = x_output ;
-assign pp_in_lw_axi_y = y_output ;
-assign pp_in_lw_axi_z = z_output ;
+assign pp_in_axi_x = x_output ; // need to sign extend
+assign pp_in_axi_y = y_output ;
+assign pp_in_axi_z = z_output ;
 //=======================================================
 //  instantiation of synthesizable verilog from modelSim at the top level
 //=======================================================
@@ -422,9 +422,9 @@ Computer_System The_System (
 	// PIO ports
 	////////////////////////////////////
 	// OUTPUTS from the FPGA, INPUT to HPS
-	.pp_in_lw_axi_x_export					(pp_in_lw_axi_x),
-	.pp_in_lw_axi_y_export					(pp_in_lw_axi_y),
-	.pp_in_lw_axi_z_export					(pp_in_lw_axi),
+	.pp_in_axi_x_export						(pp_in_axi_x),
+	.pp_in_axi_y_export						(pp_in_axi_y),
+	.pp_in_axi_z_export						(pp_in_axi),
 	// INPUTS to the FPGA, OUTPUT from HPS
 	.pp_out_lw_axi_clock_export				(pp_out_lw_axi),
 	.pp_out_lw_axi_reset_export				(pp_out_lw_axi_reset),

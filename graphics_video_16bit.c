@@ -24,23 +24,21 @@
 #include <semaphore.h>
 
 // lab 1 week 3 (fix2float conversions)
-// define 12.20 fix point --> 6 sign bits, 6 integer bits, 20 fractional bits?
-typedef signed int fix20 ;
-#define int2fix20(a) ((fix20)(a << 20))
-#define fix2int20(a) ((int)(a >> 20))
-#define float2fix20(a) (fix20)(a*1048576) // 2^20 = 1048576
-#define	fix2float20(a)  (((float)(a))/1048576.0)
+#define int2fix(a)	(((int)(a)) << 20)
+#define fix2int(a)	((signed char)((a) >> 20))
+#define float2fix(a) (int)(a*1048576) // 2^20 = 1048576
+#define	fix2float(a)  (((float)(a))/1048576.0)
 
 
 // lab 1 week 3 (macros)
 // default initial conditions
-#define DEFAULT_X0				float2fix(-1.0) // uhhh negative value how
-#define DEFAULT_Y0				float2fix(0.1)
-#define DEFAULT_Z0				float2fix(25.0)
+#define DEFAULT_X0				-1.0
+#define DEFAULT_Y0				0.1
+#define DEFAULT_Z0				25.0
 // default parameters
-#define DEFAULT_SIGMA			float2fix(10.0) 
-#define DEFAULT_RHO				float2fix(28.0)
-#define DEFAULT_BETA            float2fix(2.6666666) // 8/3
+#define DEFAULT_SIGMA			10.0
+#define DEFAULT_RHO				28.0
+#define DEFAULT_BETA            2.6666666 // 8/3
 // define three projection's plot origin on 640x480 pixel VGA screen
 #define XZ_ORIGIN_H				160
 #define XZ_ORIGIN_V				120
@@ -60,14 +58,14 @@ typedef signed int fix20 ;
 
 // lab 1 week 3 (global variables, modified in code)
 // for plotting along horizontal and vertical direction of the three 2D projections (XZ, YZ, XY)
-volatile int *horizontal_coord_xz = NULL ; // can probably just use the xyz pio read pointers
-volatile int *vertical_coord_xz = NULL ;
-volatile int *horizontal_coord_yz = NULL ;
-volatile int *vertical_coord_yz = NULL ;
-volatile int *horizontal_coord_xy = NULL ;
-volatile int *vertical_coord_xy = NULL ;
+volatile signed int *horizontal_coord_xz = NULL ; // can probably just use the xyz pio read pointers
+volatile signed int *vertical_coord_xz = NULL ;
+volatile signed int *horizontal_coord_yz = NULL ;
+volatile signed int *vertical_coord_yz = NULL ;
+volatile signed int *horizontal_coord_xy = NULL ;
+volatile signed int *vertical_coord_xy = NULL ;
 // xyz output values from FPGA to ARM are fix-point --> fix2float --> some values very small (e.g 0.6, 0.1, 0.045) --> scale by some factor to be visible on 640x480 pixel VGA screen
-float scale_factor = 100;
+float scale_factor = 1.0;
 // control pace of drawing (stall for a bit after each clock pulse in integrator_thread)
 unsigned int delay_time;
 // if 1 --> integrator resumes, if 0 --> integrator pauses (ARM stop sending clock pulses to FPGA's integrator)
@@ -79,12 +77,12 @@ float value_buffer;
 // return value from scanf --> make sure successfully read all user input  
 int j;
 // for VGA_line, to draw a line from previous position (horiz_prev) to current position (horizontal_coord)
-int horiz_prev_xz;
-int vert_prev_xz;
-int horiz_prev_yz;
-int vert_prev_yz;
-int horiz_prev_xy;
-int vert_prev_xy;
+int signed horiz_prev_xz;
+int signed vert_prev_xz;
+int signed horiz_prev_yz;
+int signed vert_prev_yz;
+int signed horiz_prev_xy;
+int signed vert_prev_xy;
 // variables to be display later on vga text
 float text_x0;
 float text_y0;
@@ -114,10 +112,6 @@ sem_t reset_semaphore, user_input_semaphore ; // tell user_input_thread that res
 #define HW_REGS_SPAN          0x00005000 
 
 // lab 1 week 3 (pio base address)
-// axi bus marcos for pio offset 
-#define X_PIO_READ 			  0x04000000 // offsets
-#define Y_PIO_READ 			  0x05000000
-#define Z_PIO_READ 			  0x06000000
 // lw axi bus marcos for pio offset 
 #define CLOCK_PIO 			  0x10
 #define RESET_PIO 			  0x20
@@ -127,6 +121,9 @@ sem_t reset_semaphore, user_input_semaphore ; // tell user_input_thread that res
 #define X0_PIO 			      0x60
 #define Y0_PIO 			      0x70
 #define Z0_PIO 			      0x80
+#define X_PIO_READ 			  0x90 // offsets
+#define Y_PIO_READ 			  0x100
+#define Z_PIO_READ 			  0x110
 
 
 // graphics primitives
@@ -159,7 +156,7 @@ int colors[] = {red, dark_red, green, dark_green, blue, dark_blue,
 // pixel macro --> draw pixel routine that associate pixel w/ address according to consecutive addressing mode
 #define VGA_PIXEL(x,y,color) do{\
 	int  *pixel_ptr ;\
-	pixel_ptr = (int*)((char *)vga_pixel_ptr + (((y)*640+(x))<<1)) ; \ // 16 bit format in xy fornat
+	pixel_ptr = (int*)((char *)vga_pixel_ptr + (((y)*640+(x))<<1));\
 	*(short *)pixel_ptr = (color);\
 } while(0)
 
@@ -213,16 +210,18 @@ void * reset_thread() {
 		// default x0, y0, z0, sigma, rho, beta
 		printf("Default values? (y/n):") ;
 		j = scanf("%s", input_buffer) ; // read a string from command line interface and store in input buffer --> j is 1 if user input something, 0 if nothing is read
+		printf("get past scanf rst"); //we arent getting past this, dont worry about the rest of the thread
 		
+
 		if (strcmp(input_buffer, "y")==0) { // if y to default value
 			// set default initial conditions and parameters
 			// send to FPGA through PIOs
-			*(x0_pio_ptr) = fix2int(DEFAULT_X0); // is it an overkill to convert from float to fix then from fix to int through...
-			*(y0_pio_ptr) = fix2int(DEFAULT_Y0);
-			*(z0_pio_ptr) = fix2int(DEFAULT_Z0);
-			*(sigma_pio_ptr) = fix2int(DEFAULT_SIGMA);
-			*(rho_pio_ptr) = fix2int(DEFAULT_RHO);
-			*(beta_pio_ptr) = fix2int(DEFAULT_BETA);
+			*(x0_pio_ptr) = float2fix(DEFAULT_X0); 
+			*(y0_pio_ptr) = float2fix(DEFAULT_Y0);
+			*(z0_pio_ptr) = float2fix(DEFAULT_Z0);
+			*(sigma_pio_ptr) = float2fix(DEFAULT_SIGMA);
+			*(rho_pio_ptr) = float2fix(DEFAULT_RHO);
+			*(beta_pio_ptr) = float2fix(DEFAULT_BETA);
 
 		} else if (strcmp(input_buffer, "n")==0) { // if n to default value
 			// ask user for new initial condition values and new parameters, then set new initial condition and new parameter
@@ -230,27 +229,27 @@ void * reset_thread() {
 			printf("X0: ") ;
 			j = scanf("%f", &value_buffer) ;
 			text_x0 = value_buffer ; // store value to initial condition variable to be display later on vga text
-			*(x0_pio_ptr) = float2fix20(value_buffer);// set initial condition --> send to FPGA through PIOs
+			*(x0_pio_ptr) = float2fix(value_buffer);// set initial condition --> send to FPGA through PIOs
 			printf("Y0: ") ;
 			j = scanf("%f", &value_buffer) ;
 			text_y0 = value_buffer ;
-			*(y0_pio_ptr) = float2fix20(value_buffer);
+			*(y0_pio_ptr) = float2fix(value_buffer);
 			printf("Z0: ") ;
 			j = scanf("%f", &value_buffer) ;
 			text_z0 = value_buffer ;
-			*(z0_pio_ptr) = float2fix20(value_buffer);
+			*(z0_pio_ptr) = float2fix(value_buffer);
 			printf("SIGMA: ") ;
 			j = scanf("%f", &value_buffer) ;
 			text_sigma = value_buffer ;
-			*(sigma_pio_ptr) = float2fix20(value_buffer);
+			*(sigma_pio_ptr) = float2fix(value_buffer);
 			printf("RHO: ") ;
 			j = scanf("%f", &value_buffer) ;
 			text_rho = value_buffer ;
-			*(rho_pio_ptr) = float2fix20(value_buffer);
+			*(rho_pio_ptr) = float2fix(value_buffer);
 			printf("BETA: ") ;
 			j = scanf("%f", &value_buffer) ;
 			text_beta = value_buffer ;
-			*(beta_pio_ptr) = float2fix20(value_buffer);
+			*(beta_pio_ptr) = float2fix(value_buffer);
 		} 
 
 		// consecutive addressing mode --> use VGA_LINE to plot!
@@ -279,7 +278,7 @@ void * reset_thread() {
 		*clock_pio_ptr = 0;
 
 		// initialize the previous states 
-		horiz_prev_xz = (int)(-fix2float(*(horizontal_coord_xz))*scale_factor) ; // neeeeeed to fix sign conversions
+		horiz_prev_xz = (int)(-fix2float(*(horizontal_coord_xz))*scale_factor) ; 
 		vert_prev_xz = (int)(-fix2float(*(vertical_coord_xz))*scale_factor) ;
 		horiz_prev_yz = (int)(-fix2float(*(horizontal_coord_yz))*scale_factor) ;
 		vert_prev_yz = (int)(-fix2float(*(vertical_coord_yz))*scale_factor) ;
@@ -307,6 +306,9 @@ void * user_input_thread() {
 		// command line interface
 		printf("Enter command (f, s, p, r, c, sigma, rho, beta, reset): ") ;
 		j = scanf("%s", input_buffer) ;
+		printf("get past scanf usrinput");//we arent getting past this, dont worry about the rest of the thread
+
+
 		// strcmp --> string compare, if input_buffer's string value identical to "s", output 0
 		if (strcmp(input_buffer, "f")==0) { // speed up plotting
 			delay_time = (delay_time<2)?delay_time:(delay_time>>1); // delay_time / 2
@@ -322,23 +324,24 @@ void * user_input_thread() {
 			printf("SIGMA: ") ;
 			j = scanf("%f", &value_buffer) ;
 			text_sigma = value_buffer ;
-			*(sigma_pio_ptr) = float2fix20(value_buffer);
+			*(sigma_pio_ptr) = float2fix(value_buffer);
 		} else if (strcmp(input_buffer, "rho")==0) { // change rho
 			printf("RHO: ") ;
 			j = scanf("%f", &value_buffer) ;
 			text_rho = value_buffer ;
-			*(rho_pio_ptr) = float2fix20(value_buffer);
+			*(rho_pio_ptr) = float2fix(value_buffer);
 		} else if (strcmp(input_buffer, "beta")==0) { // change beta
 			printf("BETA: ") ;
 			j = scanf("%f", &value_buffer) ;
 			text_beta = value_buffer ;
-			*(beta_pio_ptr) = float2fix20(value_buffer);
+			*(beta_pio_ptr) = float2fix(value_buffer);
 		} else if (strcmp(input_buffer, "reset")==0) { // reset
 			sem_post(&reset_semaphore) ;
 			sem_wait(&user_input_semaphore) ;
 		}
 		sem_post(&user_input_semaphore) ;
 	} // end while(1)
+	printf("Thread 2 done");
 }
 
 // Thread 3: integrator thread
@@ -348,27 +351,30 @@ void * integrator_thread() {
 	while(1) {
 		if (goFlag == PAUSE) {
 			// no clock pulses send to integrator, always animate same image
+			printf("pause");
 
 			// text that shows initial conditions and parameters
-			char text_buffer[64]; 
+			char text_buffer[256]; 
+			printf("pause 1");
 			sprintf(text_buffer, "X0: %f", text_x0);
-			VGA_text (20, 360, text_buffer);
+			printf("pause 2");
+			VGA_text (20, 5, text_buffer);
 			sprintf(text_buffer, "Y0: %f", text_y0);
-			VGA_text (20, 365, text_buffer);
+			VGA_text (20, 6, text_buffer);
 			sprintf(text_buffer, "Z0: %f", text_z0);
-			VGA_text (20, 370, text_buffer);
+			VGA_text (20, 7, text_buffer);
 			sprintf(text_buffer, "SIGMA: %f", text_sigma);
-			VGA_text (20, 375, text_buffer);
+			VGA_text (20, 8, text_buffer);
 			sprintf(text_buffer, "RHO: %f", text_rho);
-			VGA_text (20, 380, text_buffer);
+			VGA_text (20, 9, text_buffer);
 			sprintf(text_buffer, "BETA: %f", text_beta);
-			VGA_text (20, 385, text_buffer);
+			VGA_text (20, 10, text_buffer);
 
-			// draw to the screen
-			// VGA_line(int x1, int y1, int x2, int y2, short c)
-			// draws a line segment between previous position (x1, y1) and current position (x2, y2)
+			//draw to the screen
+			//VGA_line(int x1, int y1, int x2, int y2, short c)
+			//draws a line segment between previous position (x1, y1) and current position (x2, y2)
 
-			// for xz projection
+			//for xz projection
 			VGA_line(horiz_prev_xz + XZ_ORIGIN_H,
 					 vert_prev_xz + XZ_ORIGIN_V,
 					(int)(-fix2float(*(horizontal_coord_xz))*scale_factor) + XZ_ORIGIN_H,
@@ -389,6 +395,8 @@ void * integrator_thread() {
 					(int)(-fix2float(*(vertical_coord_xy))*scale_factor) + XY_ORIGIN_V,
 					white) ;
 
+			printf("1");
+
 			// store previous value
 
 			// for xz projection
@@ -400,9 +408,11 @@ void * integrator_thread() {
 			// for xy projection
 			horiz_prev_xy = (int)(-fix2float(*(horizontal_coord_xy))*scale_factor) ;
 			vert_prev_xy = (int)(-fix2float(*(vertical_coord_xy))*scale_factor) ;
+			printf("2");
 
 		}
 		if (goFlag == RESUME) {
+			printf("resume");
 			// clock the integrators
 			*clock_pio_ptr = 1; // positive edge of clock, xyz reg assume the value of xyznew
 			*clock_pio_ptr = 0;
@@ -411,23 +421,26 @@ void * integrator_thread() {
 			usleep(delay_time) ;
 
 			// text that shows initial conditions and parameters
-			char text_buffer[64]; 
+			char text_buffer[256]; 
 			sprintf(text_buffer, "X0: %f", text_x0);
-			VGA_text (20, 360, text_buffer);
+			VGA_text (20, 5, text_buffer);
 			sprintf(text_buffer, "Y0: %f", text_y0);
-			VGA_text (20, 365, text_buffer);
+			VGA_text (20, 6, text_buffer);
 			sprintf(text_buffer, "Z0: %f", text_z0);
-			VGA_text (20, 370, text_buffer);
+			VGA_text (20, 7, text_buffer);
 			sprintf(text_buffer, "SIGMA: %f", text_sigma);
-			VGA_text (20, 375, text_buffer);
+			VGA_text (20, 8, text_buffer);
 			sprintf(text_buffer, "RHO: %f", text_rho);
-			VGA_text (20, 380, text_buffer);
+			VGA_text (20, 9, text_buffer);
 			sprintf(text_buffer, "BETA: %f", text_beta);
-			VGA_text (20, 385, text_buffer);
+			VGA_text (20, 10, text_buffer);
 
-			// draw to the screen
-			// VGA_line(int x1, int y1, int x2, int y2, short c)
-			// draws a line segment between previous position (x1, y1) and current position (x2, y2)
+			//draw to the screen
+			//VGA_line(int x1, int y1, int x2, int y2, short c)
+			//draws a line segment between previous position (x1, y1) and current position (x2, y2)
+
+ 
+			printf("3");
 
 			// for xz projection
 			VGA_line(horiz_prev_xz + XZ_ORIGIN_H,
@@ -461,6 +474,7 @@ void * integrator_thread() {
 			// for xy projection
 			horiz_prev_xy = (int)(-fix2float(*(horizontal_coord_xy))*scale_factor) ;
 			vert_prev_xy = (int)(-fix2float(*(vertical_coord_xy))*scale_factor) ;
+			printf("4");
 		}
 	} // end while(1)
 }
@@ -497,6 +511,9 @@ int main(void)
 	x0_pio_ptr = (int *)(h2p_lw_virtual_base + X0_PIO);
 	y0_pio_ptr = (int *)(h2p_lw_virtual_base + Y0_PIO);
 	z0_pio_ptr = (int *)(h2p_lw_virtual_base + Z0_PIO);
+	x_pio_read_ptr =(unsigned int *)(h2p_lw_virtual_base + X_PIO_READ);
+	y_pio_read_ptr =(unsigned int *)(h2p_lw_virtual_base + Y_PIO_READ);
+	z_pio_read_ptr =(unsigned int *)(h2p_lw_virtual_base + Z_PIO_READ);
 
 
 	// === get VGA char addr =====================
@@ -524,10 +541,7 @@ int main(void)
     // Get the address that maps to the FPGA pixel buffer
 	vga_pixel_ptr =(unsigned int *)(vga_pixel_virtual_base);
 
-	// lab 1 week 3 (store correct virtual memory to ptr)
-	x_pio_read_ptr =(unsigned int *)(vga_pixel_virtual_base + X_PIO_READ);
-	y_pio_read_ptr =(unsigned int *)(vga_pixel_virtual_base + Y_PIO_READ);
-	z_pio_read_ptr =(unsigned int *)(vga_pixel_virtual_base + Z_PIO_READ);
+	
 
 	// ===========================================
 

@@ -115,9 +115,9 @@ sem_t reset_semaphore, user_input_semaphore ; // tell user_input_thread that res
 
 // lab 1 week 3 (pio base address)
 // axi bus marcos for pio offset 
-#define X_PIO_READ 			  0x10 // offsets
-#define Y_PIO_READ 			  0x20
-#define Z_PIO_READ 			  0x30
+#define X_PIO_READ 			  0x04000000 // offsets
+#define Y_PIO_READ 			  0x05000000
+#define Z_PIO_READ 			  0x06000000
 // lw axi bus marcos for pio offset 
 #define CLOCK_PIO 			  0x10
 #define RESET_PIO 			  0x20
@@ -168,18 +168,18 @@ void *h2p_lw_virtual_base;
 
 // lab 1 week 3 (pio pointers)
 // axi bus pio pointer
-volatile int * x_pio_read_ptr = NULL ; // signed int, i should use 32 bit fix pt?
-volatile int * y_pio_read_ptr = NULL ;
-volatile int * z_pio_read_ptr = NULL ;
+volatile signed int * x_pio_read_ptr = NULL ; // signed int, i should use 32 bit fix pt?
+volatile signed int * y_pio_read_ptr = NULL ;
+volatile signed int * z_pio_read_ptr = NULL ;
 // lw axi bus pio pointer
 volatile unsigned int * clock_pio_ptr = NULL ;
 volatile unsigned int * reset_pio_ptr = NULL ;
 volatile unsigned int * sigma_pio_ptr = NULL ; // from wikipedia, one normally assumes the parameters sigma, rho, beta positive
 volatile unsigned int * rho_pio_ptr = NULL ;
 volatile unsigned int * beta_pio_ptr = NULL ;
-volatile int * x0_pio_ptr = NULL ; // signed int
-volatile int * y0_pio_ptr = NULL ;
-volatile int * z0_pio_ptr = NULL ;
+volatile signed int * x0_pio_ptr = NULL ; // signed int
+volatile signed int * y0_pio_ptr = NULL ;
+volatile signed int * z0_pio_ptr = NULL ;
 
 // pixel buffer
 volatile unsigned int * vga_pixel_ptr = NULL ;

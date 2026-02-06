@@ -22,7 +22,6 @@
 // lab 1 week 3 (additional libraries) --> add "-lpthread" to "gcc graphics..."
 #include <pthread.h>
 #include <semaphore.h>
-#include <stdbool.h>
 
 // lab 1 week 3 (fix2float conversions)
 #define int2fix(a)	(((int)(a)) << 20)
@@ -44,7 +43,7 @@
 // lab 1 week 3 (global variables)
 char input_buffer[64]; // accept keyboard inputs 
 int delay_time; // control pace of drawing
-bool goFlag = 0; // if true, integrator_thread run
+int goFlag = 0; // if 1, integrator_thread run
 
 
 // lab 1 week 3 (global objects of type relative to pthreads --> mutex objects, semaphores)
@@ -174,13 +173,13 @@ void * reset_thread() {
 		pthread_mutex_unlock(&input_buffer_lock);
 
 		// set initial conditions?
-		// xy addressing?
-		// for xy projection?
+		// consecutive addressing mode --> just use VGA_PIXEL(x, y, color)?
+		// for xz projection?
 		vertical_coord = y_pio_read_ptr ;
 		horizontal_coord = x_pio_read_ptr ;
-		// for xz projection?
-
 		// for yz projection?
+
+		// for xy projection? (might be upside down unless make it negative)
 
 		// reset the FPGA state machine
 		*clock_pio_ptr = 0;
@@ -295,7 +294,7 @@ int main(void)
 		return(1);
 	}
 
-	// lab 1 week 3 
+	// lab 1 week 3 (store correct virtual memory to ptr)
 	clock_pio_ptr = (unsigned int *)(h2p_lw_virtual_base + CLOCK_PIO);
 	reset_pio_ptr = (unsigned int *)(h2p_lw_virtual_base + RESET_PIO);
 	sigma_pio_ptr = (unsigned int *)(h2p_lw_virtual_base + SIGMA_PIO);
@@ -331,7 +330,7 @@ int main(void)
     // Get the address that maps to the FPGA pixel buffer
 	vga_pixel_ptr =(unsigned int *)(vga_pixel_virtual_base);
 
-	// lab 1 week 3 
+	// lab 1 week 3 (store correct virtual memory to ptr)
 	x_pio_read_ptr =(unsigned int *)(vga_pixel_virtual_base + X_PIO_READ);
 	y_pio_read_ptr =(unsigned int *)(vga_pixel_virtual_base + Y_PIO_READ);
 	z_pio_read_ptr =(unsigned int *)(vga_pixel_virtual_base + Z_PIO_READ);
@@ -402,7 +401,7 @@ int main(void)
 	pthread_join(thread_integrator_thread, NULL);
 	return 0;
 
-	// i should delete this whole while(1) ***just showing all the vga graphics options
+	// i should delete this whole while(1) ***just showing all the vga graphics primitives in use
 	while(1) 
 	{
 		// start timer

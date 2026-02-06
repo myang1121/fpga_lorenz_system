@@ -28,6 +28,7 @@
 #define fix2int(a)	((signed char)((a) >> 20))
 #define float2fix(a) (int)(a*1048576) // 2^20 = 1048576
 #define	fix2float(a)  (((float)(a))/1048576.0)
+// declare 12.20 fix pt
 
 // lab 1 week 3 (macros)
 // default initial conditions
@@ -38,19 +39,48 @@
 #define DEFAULT_SIGMA			float2fix(10.0) 
 #define DEFAULT_RHO				float2fix(28.0)
 #define DEFAULT_BETA            float2fix(2.6666666) // 8/3
+// define three projection's plot origin on 640x480 pixel VGA screen
+#define XZ_ORIGIN_H				160
+#define XZ_ORIGIN_V				120
+#define YZ_ORIGIN_H				480
+#define YZ_ORIGIN_V				120
+#define XY_ORIGIN_H				320
+#define XY_ORIGIN_V				360
+// define where initial condition and parameter text should start writing on 640x480 pixel VGA screen
+// let's do 5 pixel vertical distance between each line --> REMINDER TO MYSELF
+#define INITIAL_PARAM_TEXT_START_H				20
+#define INITIAL_PARAM_TEXT_START_V				360
 
 
-// lab 1 week 3 (global variables)
-char input_buffer[64]; // accept keyboard inputs 
-int delay_time; // control pace of drawing
-int goFlag = 0; // if 1, integrator_thread run
+
+// lab 1 week 3 (global variables, modified in code)
+// for plotting along horizontal and vertical direction of the three 2D projections (XZ, YZ, XY)
+volatile int *horizontal_coord_xz = NULL ; // can probably just use the xyz pio read pointers
+volatile int *vertical_coord_xz = NULL ;
+volatile int *horizontal_coord_yz = NULL ;
+volatile int *vertical_coord_yz = NULL ;
+volatile int *horizontal_coord_xy = NULL ;
+volatile int *vertical_coord_xy = NULL ;
+// xyz output values from FPGA to ARM are fix-point --> fix2float --> some values very small (e.g 0.6, 0.1, 0.045) --> scale by some factor to be visible on 640x480 pixel VGA screen
+float scale_factor ;
+// control pace of drawing (stall for a bit after each clock pulse in integrator_thread)
+unsigned int delay_time;
+// if 1 --> integrator resumes, if 0 --> integrator pauses (ARM stop sending clock pulses to FPGA's integrator)
+int goFlag = 0;
+// character array (max 63 character, one null terminator), accept keyboard inputs
+char input_buffer[64];
+// accept floating point value
+float value_buffer;
+// return value from scanf --> make sure successfully read all user input  
+int j;
+// for VGA_line, to draw a line from previous position (horiz_prev) to current position (horizontal_coord)
+int horiz_prev;
+int vert_prev;
 
 
 // lab 1 week 3 (global objects of type relative to pthreads --> mutex objects, semaphores)
 // access to text buffer
 pthread_mutex_t input_buffer_lock= PTHREAD_MUTEX_INITIALIZER;
-// delay_time protection
-pthread_mutex_t delay_time_lock= PTHREAD_MUTEX_INITIALIZER; // do i need???
 // semaphores
 sem_t reset_semaphore, user_input_semaphore ; // tell user_input_thread that reset (and initial condition, parameters) is set, ready for user input
 
@@ -128,7 +158,7 @@ volatile int * z_pio_read_ptr = NULL ;
 // lw axi bus pio pointer
 volatile unsigned int * clock_pio_ptr = NULL ;
 volatile unsigned int * reset_pio_ptr = NULL ;
-volatile unsigned int * sigma_pio_ptr = NULL ;
+volatile unsigned int * sigma_pio_ptr = NULL ; // from wikipedia, one normally assumes the parameters sigma, rho, beta positive
 volatile unsigned int * rho_pio_ptr = NULL ;
 volatile unsigned int * beta_pio_ptr = NULL ;
 volatile int * x0_pio_ptr = NULL ; // signed int
@@ -157,30 +187,46 @@ void * reset_thread() {
 		// waiting to be signaled by user_input_thread (user type in "reset" to command line interface)
 		sem_wait(&reset_semaphore) ;
 		
-		// clear the text
+		// clear the text ??? hmmmmm
 		VGA_text_clear();
 
-		// stop the animation
+		// stop the animation (plotting pause)
 		goFlag = 0;
 
-		pthread_mutex_lock(&input_buffer_lock);
-		// actual enter
 		// use default values?
 		// default x0, y0, z0, sigma, rho, beta
-		printf("Default values? (y):") ;
-		j = scanf("&s", input_buffer) ;
-		// unlock the input_buffer
-		pthread_mutex_unlock(&input_buffer_lock);
+		printf("Default values? (y/n):") ;
+		j = scanf("%s", input_buffer) ; // read a string from command line interface and store in input buffer --> j is 1 if user input something, 0 if nothing is read
+		
+		if (strcmp(input_buffer, "y")==0) { // if y to default value
+			// set default initial conditions and parameters
+			// send to FPGA through PIOs
+			*(x0_pio_ptr) = fix2int(DEFAULT_X0); // is it an overkill to convert from float to fix then from fix to int through...
+			*(y0_pio_ptr) = fix2int(DEFAULT_Y0);
+			*(z0_pio_ptr) = fix2int(DEFAULT_Z0);
+			*(sigma_pio_ptr) = fix2int(DEFAULT_SIGMA);
+			*(rho_pio_ptr) = fix2int(DEFAULT_RHO);
+			*(beta_pio_ptr) = fix2int(DEFAULT_BETA);
 
-		// set initial conditions?
+		} else if (strcmp(input_buffer, "n")==0) { // if n to default value
+			// ask user for new initial condition values and new parameters, then set new initial condition and new parameter
+			printf("Input new initial conditions and parameters in floating point.\n") ;
+			printf("X0: ") ;
+			j = scanf("%f", value_buffer) ;
+			*(x0_pio_ptr) = // set initial condition --> send to FPGA through PIOs
+			
+		} 
+
 		// consecutive addressing mode --> just use VGA_PIXEL(x, y, color)?
 		// for xz projection?
-		vertical_coord = y_pio_read_ptr ;
-		horizontal_coord = x_pio_read_ptr ;
+		vertical_coord_xz = x_pio_read_ptr ;
+		horizontal_coord_xz = z_pio_read_ptr ;
 		// for yz projection?
-
+		vertical_coord_yz = y_pio_read_ptr ;
+		horizontal_coord_yz = z_pio_read_ptr ;
 		// for xy projection? (might be upside down unless make it negative)
-
+		vertical_coord_xy = x_pio_read_ptr ;
+		horizontal_coord_xy = y_pio_read_ptr ;
 		// reset the FPGA state machine
 		*clock_pio_ptr = 0;
 		*reset_pio_ptr = 0;
@@ -217,10 +263,10 @@ void * user_input_thread() {
 		// wait for reset_thread to be done
 		sem_wait(&user_input_semaphore) ;
 
-		pthread_mutex_lock(&input_buffer_lock);
 		// command line interface
 		printf("Enter command: ") ;
 		j = scanf("%s", input_buffer) ;
+		// strcmp --> string compare, if input_buffer's string value identical to "s", output 0
 		if (strcmp(input_buffer, "s")==0) { // slow down plotting
 			delay_time = (delay_time>5242888)?delay_time:(delay_time<<1) ;
 		} else if (strcmp(input_buffer, "f")==0) { // fast plotting
@@ -231,13 +277,12 @@ void * user_input_thread() {
 			sem_post(&reset_semaphore) ;
 			sem_wait(&user_input_semaphore) ;
 		}
-		pthread_mutex_unlock(&input_buffer_lock);
 		sem_post(&user_input_semaphore) ;
 	} // end while(1)
 }
 
 // Thread 3: integrator thread
-// always run in background?
+// integrator_thread always run in background (check if goFlag is 0 or 1), synchronize w/ user_input_thread (resume or pause plotting) by goFlag
 // actually do plotting and write text (but only if goFlag true)
 void * integrator_thread() {
 	while(1) {
@@ -256,6 +301,8 @@ void * integrator_thread() {
 			usleep(delay_time) ;
 
 			// draw to the screen
+			// VGA_line(int x1, int y1, int x2, int y2, short c)
+			// draws a line segment between previous position (x1, y1) and current position (x2, y2)
 			VGA_line(horiz_prev + 320,
 					 vert_prev + 240,
 					(int)(-fix2float(*(horizontal_coord))*scale_factor) + 320,

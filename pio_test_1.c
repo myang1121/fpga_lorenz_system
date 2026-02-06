@@ -23,20 +23,28 @@
 void *h2p_virtual_base;
 volatile unsigned int * axi_pio_ptr = NULL ;
 volatile unsigned int * axi_pio_read_ptr = NULL ;
+volatile unsigned int * pio_button_ptr = NULL ;
 
 // lw bus; PIO
 #define FPGA_LW_BASE 	0xff200000
 #define FPGA_LW_SPAN	0x00001000
+#define BUTTON_PIO 0x20
 // the light weight bus base
 void *h2p_lw_virtual_base;
 // HPS_to_FPGA FIFO status address = 0
 volatile unsigned int * lw_pio_ptr = NULL ;
 volatile unsigned int * lw_pio_read_ptr = NULL ;
+volatile unsigned int * pio_led_ptr = NULL ;
+
 
 // read offset is 0x10 for both busses
 // remember that eaxh axi master bus needs unique address
 #define FPGA_PIO_READ	0x10
 #define FPGA_PIO_WRITE	0x00
+#define LED_PIO 0x20
+
+
+
 
 
 // /dev/mem file id
@@ -68,6 +76,9 @@ int main(void)
 	// Get the addresses that map to the two parallel ports on the light-weight bus
 	lw_pio_ptr = (unsigned int *)(h2p_lw_virtual_base);
 	lw_pio_read_ptr = (unsigned int *)(h2p_lw_virtual_base + FPGA_PIO_READ);
+	pio_led_ptr = (unsigned int *)(h2p_lw_virtual_base + LED_PIO);
+	
+
 	
 	//============================================
 	
@@ -83,6 +94,7 @@ int main(void)
     // Get the addresses that map to the two parallel ports on the AXI bus
 	axi_pio_ptr =(unsigned int *)(h2p_virtual_base);
 	axi_pio_read_ptr =(unsigned int *)(h2p_virtual_base + FPGA_PIO_READ);
+	pio_button_ptr = (unsigned int *)(h2p_lw_virtual_base + BUTTON_PIO);
 	//============================================
 	
 	
@@ -96,9 +108,14 @@ int main(void)
 		// send to PIOs
 		*(lw_pio_ptr)  = num ;
 		*(axi_pio_ptr) = num ;
+		*(pio_led_ptr) = num ;
+		
 		
 		// receive back and print
-		printf("pio in=%d %d\n\r", *(lw_pio_read_ptr), *(axi_pio_read_ptr)) ;
+		printf("pio in=%d %d %d\n\r", *(lw_pio_read_ptr), *(axi_pio_read_ptr), *(pio_button_ptr)) ;
+
+		
+
 		
 	} // end while(1)
 } // end main

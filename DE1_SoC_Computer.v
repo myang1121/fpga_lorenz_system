@@ -383,7 +383,7 @@ wire signed [26:0] z_output ;
 wire [31:0] pp_in_axi_x, pp_in_axi_y, pp_in_axi_z ;
 // INPUTS to the FPGA, OUTPUT from HPS
 wire [31:0] pp_out_lw_axi_clock, pp_out_lw_axi_reset ;
-wire [31:0] pp_out_lw_axi_sigma, pp_out_lw_axi_rho, pp_out_lw_axi_beta ; // parameters (get back int from ARM...need to convert to fix 7.20)
+wire [31:0] pp_out_lw_axi_sigma, pp_out_lw_axi_rho, pp_out_lw_axi_beta ; // parameters (get back 32 bit 12.20 fix pt)
 wire [31:0] pp_out_lw_axi_x0, pp_out_lw_axi_y0, pp_out_lw_axi_z0 ; // initial conditions
 
 assign pp_in_axi_x = ({{5{x_output[26]}}, {x_output}}); // sign extend most significant sign bit --> total 32 bit

@@ -24,11 +24,13 @@
 #include <semaphore.h>
 
 // lab 1 week 3 (fix2float conversions)
-#define int2fix(a)	(((int)(a)) << 20)
-#define fix2int(a)	((signed char)((a) >> 20))
-#define float2fix(a) (int)(a*1048576) // 2^20 = 1048576
-#define	fix2float(a)  (((float)(a))/1048576.0)
-// declare 12.20 fix pt
+// define 12.20 fix point --> 6 sign bits, 6 integer bits, 20 fractional bits?
+typedef signed int fix20 ;
+#define int2fix20(a) ((fix20)(a << 20))
+#define fix2int20(a) ((int)(a >> 20))
+#define float2fix20(a) (fix20)(a*1048576) // 2^20 = 1048576
+#define	fix2float20(a)  (((float)(a))/1048576.0)
+
 
 // lab 1 week 3 (macros)
 // default initial conditions
@@ -74,8 +76,12 @@ float value_buffer;
 // return value from scanf --> make sure successfully read all user input  
 int j;
 // for VGA_line, to draw a line from previous position (horiz_prev) to current position (horizontal_coord)
-int horiz_prev;
-int vert_prev;
+int horiz_prev_xz;
+int vert_prev_xz;
+int horiz_prev_yz;
+int vert_prev_yz;
+int horiz_prev_xy;
+int vert_prev_xy;
 
 
 // lab 1 week 3 (global objects of type relative to pthreads --> mutex objects, semaphores)
@@ -213,11 +219,25 @@ void * reset_thread() {
 			printf("Input new initial conditions and parameters in floating point.\n") ;
 			printf("X0: ") ;
 			j = scanf("%f", value_buffer) ;
-			*(x0_pio_ptr) = // set initial condition --> send to FPGA through PIOs
-			
+			*(x0_pio_ptr) = float2fix20(value_buffer);// set initial condition --> send to FPGA through PIOs
+			printf("Y0: ") ;
+			j = scanf("%f", value_buffer) ;
+			*(y0_pio_ptr) = float2fix20(value_buffer);
+			printf("Z0: ") ;
+			j = scanf("%f", value_buffer) ;
+			*(z0_pio_ptr) = float2fix20(value_buffer);
+			printf("SIGMA: ") ;
+			j = scanf("%f", value_buffer) ;
+			*(sigma_pio_ptr) = float2fix20(value_buffer);
+			printf("RHO: ") ;
+			j = scanf("%f", value_buffer) ;
+			*(rho_pio_ptr) = float2fix20(value_buffer);
+			printf("BETA: ") ;
+			j = scanf("%f", value_buffer) ;
+			*(beta_pio_ptr) = float2fix20(value_buffer);
 		} 
 
-		// consecutive addressing mode --> just use VGA_PIXEL(x, y, color)?
+		// consecutive addressing mode --> use VGA_LINE to plot!
 		// for xz projection?
 		vertical_coord_xz = x_pio_read_ptr ;
 		horizontal_coord_xz = z_pio_read_ptr ;
@@ -227,6 +247,7 @@ void * reset_thread() {
 		// for xy projection? (might be upside down unless make it negative)
 		vertical_coord_xy = x_pio_read_ptr ;
 		horizontal_coord_xy = y_pio_read_ptr ;
+		
 		// reset the FPGA state machine
 		*clock_pio_ptr = 0;
 		*reset_pio_ptr = 0;
@@ -242,8 +263,12 @@ void * reset_thread() {
 		*clock_pio_ptr = 0;
 
 		// initialize the previous states 
-		horiz_prev = (int)(-fix2float(*(horizontal_coord))*scale_factor) ;
-		vert_prev = (int)(-fix2float(*(vertical_coord))*scale_factor) ;
+		horiz_prev_xz = (int)(-fix2float(*(horizontal_coord_xz))*scale_factor) ; // neeeeeed to fix sign conversions
+		vert_prev_xz = (int)(-fix2float(*(vertical_coord_xz))*scale_factor) ;
+		horiz_prev_yz = (int)(-fix2float(*(horizontal_coord_yz))*scale_factor) ;
+		vert_prev_yz = (int)(-fix2float(*(vertical_coord_yz))*scale_factor) ;
+		horiz_prev_xy = (int)(-fix2float(*(horizontal_coord_xy))*scale_factor) ;
+		vert_prev_xy = (int)(-fix2float(*(vertical_coord_xy))*scale_factor) ;
 
 		// clear screen
 		VGA_box(0, 0, 639, 479, black);

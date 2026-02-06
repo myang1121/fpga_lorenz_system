@@ -52,6 +52,9 @@ typedef signed int fix20 ;
 // let's do 5 pixel vertical distance between each line --> REMINDER TO MYSELF
 #define INITIAL_PARAM_TEXT_START_H				20
 #define INITIAL_PARAM_TEXT_START_V				360
+// for go flag
+#define PAUSE				0
+#define RESUME				1
 
 
 
@@ -64,11 +67,11 @@ volatile int *vertical_coord_yz = NULL ;
 volatile int *horizontal_coord_xy = NULL ;
 volatile int *vertical_coord_xy = NULL ;
 // xyz output values from FPGA to ARM are fix-point --> fix2float --> some values very small (e.g 0.6, 0.1, 0.045) --> scale by some factor to be visible on 640x480 pixel VGA screen
-float scale_factor ;
+float scale_factor = 100;
 // control pace of drawing (stall for a bit after each clock pulse in integrator_thread)
 unsigned int delay_time;
 // if 1 --> integrator resumes, if 0 --> integrator pauses (ARM stop sending clock pulses to FPGA's integrator)
-int goFlag = 0;
+int goFlag = PAUSE;
 // character array (max 63 character, one null terminator), accept keyboard inputs
 char input_buffer[64];
 // accept floating point value
@@ -82,6 +85,13 @@ int horiz_prev_yz;
 int vert_prev_yz;
 int horiz_prev_xy;
 int vert_prev_xy;
+// variables to be display later on vga text
+float text_x0;
+float text_y0;
+float text_z0;
+float text_sigma;
+float text_rho;
+float text_beta;
 
 
 // lab 1 week 3 (global objects of type relative to pthreads --> mutex objects, semaphores)
@@ -197,7 +207,7 @@ void * reset_thread() {
 		VGA_text_clear();
 
 		// stop the animation (plotting pause)
-		goFlag = 0;
+		goFlag = PAUSE;
 
 		// use default values?
 		// default x0, y0, z0, sigma, rho, beta
@@ -218,22 +228,28 @@ void * reset_thread() {
 			// ask user for new initial condition values and new parameters, then set new initial condition and new parameter
 			printf("Input new initial conditions and parameters in floating point.\n") ;
 			printf("X0: ") ;
-			j = scanf("%f", value_buffer) ;
+			j = scanf("%f", &value_buffer) ;
+			text_x0 = value_buffer ; // store value to initial condition variable to be display later on vga text
 			*(x0_pio_ptr) = float2fix20(value_buffer);// set initial condition --> send to FPGA through PIOs
 			printf("Y0: ") ;
-			j = scanf("%f", value_buffer) ;
+			j = scanf("%f", &value_buffer) ;
+			text_y0 = value_buffer ;
 			*(y0_pio_ptr) = float2fix20(value_buffer);
 			printf("Z0: ") ;
-			j = scanf("%f", value_buffer) ;
+			j = scanf("%f", &value_buffer) ;
+			text_z0 = value_buffer ;
 			*(z0_pio_ptr) = float2fix20(value_buffer);
 			printf("SIGMA: ") ;
-			j = scanf("%f", value_buffer) ;
+			j = scanf("%f", &value_buffer) ;
+			text_sigma = value_buffer ;
 			*(sigma_pio_ptr) = float2fix20(value_buffer);
 			printf("RHO: ") ;
-			j = scanf("%f", value_buffer) ;
+			j = scanf("%f", &value_buffer) ;
+			text_rho = value_buffer ;
 			*(rho_pio_ptr) = float2fix20(value_buffer);
 			printf("BETA: ") ;
-			j = scanf("%f", value_buffer) ;
+			j = scanf("%f", &value_buffer) ;
+			text_beta = value_buffer ;
 			*(beta_pio_ptr) = float2fix20(value_buffer);
 		} 
 
@@ -274,7 +290,7 @@ void * reset_thread() {
 		VGA_box(0, 0, 639, 479, black);
 
 		// start the animation
-		goFlag = 1 ;
+		goFlag = RESUME ;
 
 		// start the user input thread
 		sem_post(&user_input_semaphore);
@@ -287,18 +303,37 @@ void * user_input_thread() {
 	while(1) {
 		// wait for reset_thread to be done
 		sem_wait(&user_input_semaphore) ;
-
+		
 		// command line interface
-		printf("Enter command: ") ;
+		printf("Enter command (f, s, p, r, c, sigma, rho, beta, reset): ") ;
 		j = scanf("%s", input_buffer) ;
 		// strcmp --> string compare, if input_buffer's string value identical to "s", output 0
-		if (strcmp(input_buffer, "s")==0) { // slow down plotting
-			delay_time = (delay_time>5242888)?delay_time:(delay_time<<1) ;
-		} else if (strcmp(input_buffer, "f")==0) { // fast plotting
-			delay_time = (delay_time<2)?delay_time:(delay_time>>1);
-		} else if (strcmp(input_buffer, "p")==0) {
-			goFlag = (goFlag==1)?0:1 ;
-		} else if (strcmp(input_buffer, "reset")==0) {
+		if (strcmp(input_buffer, "f")==0) { // speed up plotting
+			delay_time = (delay_time<2)?delay_time:(delay_time>>1); // delay_time / 2
+		} else if (strcmp(input_buffer, "s")==0) { // slow down plotting
+			delay_time = (delay_time>5242888)?delay_time:(delay_time<<1) ; // delay_time * 2
+		} else if (strcmp(input_buffer, "p")==0) { // pause plotting
+			goFlag = PAUSE;
+		} else if (strcmp(input_buffer, "r")==0) { // resume plotting
+			goFlag = RESUME;
+		} else if (strcmp(input_buffer, "c")==0) { // clear screen
+			VGA_box(0, 0, 639, 479, black);
+		} else if (strcmp(input_buffer, "sigma")==0) { // change sigma
+			printf("SIGMA: ") ;
+			j = scanf("%f", &value_buffer) ;
+			text_sigma = value_buffer ;
+			*(sigma_pio_ptr) = float2fix20(value_buffer);
+		} else if (strcmp(input_buffer, "rho")==0) { // change rho
+			printf("RHO: ") ;
+			j = scanf("%f", &value_buffer) ;
+			text_rho = value_buffer ;
+			*(rho_pio_ptr) = float2fix20(value_buffer);
+		} else if (strcmp(input_buffer, "beta")==0) { // change beta
+			printf("BETA: ") ;
+			j = scanf("%f", &value_buffer) ;
+			text_beta = value_buffer ;
+			*(beta_pio_ptr) = float2fix20(value_buffer);
+		} else if (strcmp(input_buffer, "reset")==0) { // reset
 			sem_post(&reset_semaphore) ;
 			sem_wait(&user_input_semaphore) ;
 		}
@@ -308,16 +343,66 @@ void * user_input_thread() {
 
 // Thread 3: integrator thread
 // integrator_thread always run in background (check if goFlag is 0 or 1), synchronize w/ user_input_thread (resume or pause plotting) by goFlag
-// actually do plotting and write text (but only if goFlag true)
+// actually do plotting and write text (but only if goFlag RESUME, 1)
 void * integrator_thread() {
 	while(1) {
-		if (!goFlag) {
-			// waiting for plotting to start...
-			VGA_text (0, 55, "Lorenz System Demo");
-			char text_title[40] = "ECE 5760\0" ;
-			VGA_text(0, 54, text_title) ;
+		if (goFlag == PAUSE) {
+			// no clock pulses send to integrator, always animate same image
+
+			// text that shows initial conditions and parameters
+			char text_buffer[64]; 
+			sprintf(text_buffer, "X0: %f", text_x0);
+			VGA_text (20, 360, text_buffer);
+			sprintf(text_buffer, "Y0: %f", text_y0);
+			VGA_text (20, 365, text_buffer);
+			sprintf(text_buffer, "Z0: %f", text_z0);
+			VGA_text (20, 370, text_buffer);
+			sprintf(text_buffer, "SIGMA: %f", text_sigma);
+			VGA_text (20, 375, text_buffer);
+			sprintf(text_buffer, "RHO: %f", text_rho);
+			VGA_text (20, 380, text_buffer);
+			sprintf(text_buffer, "BETA: %f", text_beta);
+			VGA_text (20, 385, text_buffer);
+
+			// draw to the screen
+			// VGA_line(int x1, int y1, int x2, int y2, short c)
+			// draws a line segment between previous position (x1, y1) and current position (x2, y2)
+
+			// for xz projection
+			VGA_line(horiz_prev_xz + XZ_ORIGIN_H,
+					 vert_prev_xz + XZ_ORIGIN_V,
+					(int)(-fix2float(*(horizontal_coord_xz))*scale_factor) + XZ_ORIGIN_H,
+					(int)(-fix2float(*(vertical_coord_xz))*scale_factor) + XZ_ORIGIN_V,
+					white) ;
+
+			// for yz projection
+			VGA_line(horiz_prev_yz + YZ_ORIGIN_H,
+					 vert_prev_yz + YZ_ORIGIN_V,
+					(int)(-fix2float(*(horizontal_coord_yz))*scale_factor) + YZ_ORIGIN_H,
+					(int)(-fix2float(*(vertical_coord_yz))*scale_factor) + YZ_ORIGIN_V,
+					white) ;
+
+			// for xy projection
+			VGA_line(horiz_prev_xy + XY_ORIGIN_H,
+					 vert_prev_xy + XY_ORIGIN_V,
+					(int)(-fix2float(*(horizontal_coord_xy))*scale_factor) + XY_ORIGIN_H,
+					(int)(-fix2float(*(vertical_coord_xy))*scale_factor) + XY_ORIGIN_V,
+					white) ;
+
+			// store previous value
+
+			// for xz projection
+			horiz_prev_xz = (int)(-fix2float(*(horizontal_coord_xz))*scale_factor) ;
+			vert_prev_xz = (int)(-fix2float(*(vertical_coord_xz))*scale_factor) ;
+			// for yz projection
+			horiz_prev_yz = (int)(-fix2float(*(horizontal_coord_yz))*scale_factor) ;
+			vert_prev_yz = (int)(-fix2float(*(vertical_coord_yz))*scale_factor) ;
+			// for xy projection
+			horiz_prev_xy = (int)(-fix2float(*(horizontal_coord_xy))*scale_factor) ;
+			vert_prev_xy = (int)(-fix2float(*(vertical_coord_xy))*scale_factor) ;
+
 		}
-		if (goFlag) {
+		if (goFlag == RESUME) {
 			// clock the integrators
 			*clock_pio_ptr = 1; // positive edge of clock, xyz reg assume the value of xyznew
 			*clock_pio_ptr = 0;
@@ -325,23 +410,60 @@ void * integrator_thread() {
 			// slow down drawing --> control pace of plotting
 			usleep(delay_time) ;
 
+			// text that shows initial conditions and parameters
+			char text_buffer[64]; 
+			sprintf(text_buffer, "X0: %f", text_x0);
+			VGA_text (20, 360, text_buffer);
+			sprintf(text_buffer, "Y0: %f", text_y0);
+			VGA_text (20, 365, text_buffer);
+			sprintf(text_buffer, "Z0: %f", text_z0);
+			VGA_text (20, 370, text_buffer);
+			sprintf(text_buffer, "SIGMA: %f", text_sigma);
+			VGA_text (20, 375, text_buffer);
+			sprintf(text_buffer, "RHO: %f", text_rho);
+			VGA_text (20, 380, text_buffer);
+			sprintf(text_buffer, "BETA: %f", text_beta);
+			VGA_text (20, 385, text_buffer);
+
 			// draw to the screen
 			// VGA_line(int x1, int y1, int x2, int y2, short c)
 			// draws a line segment between previous position (x1, y1) and current position (x2, y2)
-			VGA_line(horiz_prev + 320,
-					 vert_prev + 240,
-					(int)(-fix2float(*(horizontal_coord))*scale_factor) + 320,
-					(int)(-fix2float(*(vertifcal_coord))*scale_factor) + 240,
-					green) ;
+
+			// for xz projection
+			VGA_line(horiz_prev_xz + XZ_ORIGIN_H,
+					 vert_prev_xz + XZ_ORIGIN_V,
+					(int)(-fix2float(*(horizontal_coord_xz))*scale_factor) + XZ_ORIGIN_H,
+					(int)(-fix2float(*(vertical_coord_xz))*scale_factor) + XZ_ORIGIN_V,
+					white) ;
+
+			// for yz projection
+			VGA_line(horiz_prev_yz + YZ_ORIGIN_H,
+					 vert_prev_yz + YZ_ORIGIN_V,
+					(int)(-fix2float(*(horizontal_coord_yz))*scale_factor) + YZ_ORIGIN_H,
+					(int)(-fix2float(*(vertical_coord_yz))*scale_factor) + YZ_ORIGIN_V,
+					white) ;
+
+			// for xy projection
+			VGA_line(horiz_prev_xy + XY_ORIGIN_H,
+					 vert_prev_xy + XY_ORIGIN_V,
+					(int)(-fix2float(*(horizontal_coord_xy))*scale_factor) + XY_ORIGIN_H,
+					(int)(-fix2float(*(vertical_coord_xy))*scale_factor) + XY_ORIGIN_V,
+					white) ;
 
 			// store previous value
-			horiz_prev = (int)(-fix2float(*(horizontal_coord))*scale_factor) ;
-			vert_prev = (int)(-fix2float(*(vertical_coord))*scale_factor) ;
+
+			// for xz projection
+			horiz_prev_xz = (int)(-fix2float(*(horizontal_coord_xz))*scale_factor) ;
+			vert_prev_xz = (int)(-fix2float(*(vertical_coord_xz))*scale_factor) ;
+			// for yz projection
+			horiz_prev_yz = (int)(-fix2float(*(horizontal_coord_yz))*scale_factor) ;
+			vert_prev_yz = (int)(-fix2float(*(vertical_coord_yz))*scale_factor) ;
+			// for xy projection
+			horiz_prev_xy = (int)(-fix2float(*(horizontal_coord_xy))*scale_factor) ;
+			vert_prev_xy = (int)(-fix2float(*(vertical_coord_xy))*scale_factor) ;
 		}
 	} // end while(1)
 }
-
-
 	
 int main(void)
 {
@@ -372,9 +494,9 @@ int main(void)
 	sigma_pio_ptr = (unsigned int *)(h2p_lw_virtual_base + SIGMA_PIO);
 	rho_pio_ptr = (unsigned int *)(h2p_lw_virtual_base + RHO_PIO);
 	beta_pio_ptr = (unsigned int *)(h2p_lw_virtual_base + BETA_PIO);
-	x0_pio_ptr = (unsigned int *)(h2p_lw_virtual_base + X0_PIO);
-	y0_pio_ptr = (unsigned int *)(h2p_lw_virtual_base + Y0_PIO);
-	z0_pio_ptr = (unsigned int *)(h2p_lw_virtual_base + Z0_PIO);
+	x0_pio_ptr = (int *)(h2p_lw_virtual_base + X0_PIO);
+	y0_pio_ptr = (int *)(h2p_lw_virtual_base + Y0_PIO);
+	z0_pio_ptr = (int *)(h2p_lw_virtual_base + Z0_PIO);
 
 
 	// === get VGA char addr =====================
@@ -472,61 +594,6 @@ int main(void)
 	pthread_join(thread_user_input_thread, NULL);
 	pthread_join(thread_integrator_thread, NULL);
 	return 0;
-
-	// i should delete this whole while(1) ***just showing all the vga graphics primitives in use
-	while(1) 
-	{
-		// start timer
-		gettimeofday(&t1, NULL);
-	
-		//VGA_box(int x1, int y1, int x2, int y2, short pixel_color)
-		VGA_box(64, 0, 240, 50, blue); // blue box
-		VGA_box(250, 0, 425, 50, red); // red box
-		VGA_box(435, 0, 600, 50, green); // green box
-		
-		// cycle thru the colors
-		if (color_index++ == 11) color_index = 0;
-		
-		//void VGA_disc(int x, int y, int r, short pixel_color)
-		VGA_disc(disc_x, 100, 20, colors[color_index]);
-		disc_x += 35 ;
-		if (disc_x > 640) disc_x = 0;
-		
-		//void VGA_circle(int x, int y, int r, short pixel_color)
-		VGA_circle(320, 200, circle_x, colors[color_index]);
-		VGA_circle(320, 200, circle_x+1, colors[color_index]);
-		circle_x += 2 ;
-		if (circle_x > 99) circle_x = 0;
-		
-		//void VGA_rect(int x1, int y1, int x2, int y2, short pixel_color)
-		VGA_rect(10, 478, box_x, 478-box_x, rand()&0xffff);
-		box_x += 3 ;
-		if (box_x > 195) box_x = 10;
-		
-		//void VGA_line(int x1, int y1, int x2, int y2, short c)
-		VGA_line(210+(rand()&0x7f), 350+(rand()&0x7f), 210+(rand()&0x7f), 
-				350+(rand()&0x7f), colors[color_index]);
-		
-		// void VGA_Vline(int x1, int y1, int y2, short pixel_color)
-		VGA_Vline(Vline_x, 475, 475-(Vline_x>>2), rand()&0xffff);
-		Vline_x += 2 ;
-		if (Vline_x > 620) Vline_x = 350;
-		
-		//void VGA_Hline(int x1, int y1, int x2, short pixel_color)
-		VGA_Hline(400, Hline_y, 550, rand()&0xffff);
-		Hline_y += 2 ;
-		if (Hline_y > 400) Hline_y = 240;
-		
-		// stop timer
-		gettimeofday(&t2, NULL);
-		elapsedTime = (t2.tv_sec - t1.tv_sec) * 1000000.0;      // sec to us
-		elapsedTime += (t2.tv_usec - t1.tv_usec) ;   // us 
-		sprintf(time_string, "T = %6.0f uSec  ", elapsedTime);
-		VGA_text (10, 4, time_string);
-		// set frame rate
-		//usleep(17000);
-		
-	} // end while(1)
 } // end main
 
 /****************************************************************************************

@@ -399,12 +399,12 @@ integrator DUT   (		.x(x_output),
 							   .z(z_output),
 							   .clk(pp_out_lw_axi_clock[0]), 
 							   .reset(pp_out_lw_axi_reset[0]), 
-							   .InitialX(27'sb1_111111_00000_00000_00000_00000), // default initial conditions, x(0) = -1 
-							   .InitialY(27'sb0_000000_00011_00110_01100_11010), // y(0) = 0.1
-							   .InitialZ(27'sb0_011001_00000_00000_00000_00000), // z(0) = 25 
-							   .sigma(27'sb0_001010_00000_00000_00000_00000), // default parameters, sigma = 10
-							   .rho(27'sb0_011100_00000_00000_00000_00000), // rho = 28 
-							   .beta(27'sb0_000010_10101_01010_10101_01011)); // beta = 8/3 
+							   .InitialX(pp_out_lw_axi_x0[26:0]), // default initial conditions, x(0) = -1 
+							   .InitialY(pp_out_lw_axi_y0[26:0]), // y(0) = 0.1
+							   .InitialZ(pp_out_lw_axi_z0[26:0]), // z(0) = 25 
+							   .sigma(pp_out_lw_axi_sigma[26:0]), // default parameters, sigma = 10
+							   .rho(pp_out_lw_axi_rho[26:0]), // rho = 28 
+							   .beta(pp_out_lw_axi_beta[26:0])); // beta = 8/3 
 //=======================================================
 //  Structural coding
 //=======================================================
@@ -422,18 +422,18 @@ Computer_System The_System (
 	// PIO ports
 	////////////////////////////////////
 	// OUTPUTS from the FPGA, INPUT to HPS
-	.pp_in_axi_x_export						(pp_in_axi_x),
-	.pp_in_axi_y_export						(pp_in_axi_y),
-	.pp_in_axi_z_export						(pp_in_axi_z),
+	.pp_in_axi_x_external_connection_export						(pp_in_axi_x),
+	.pp_in_axi_y_external_connection_export						(pp_in_axi_y),
+	.pp_in_axi_z_external_connection_export						(pp_in_axi_z),
 	// INPUTS to the FPGA, OUTPUT from HPS
-	.pp_out_lw_axi_clock_export				(pp_out_lw_axi_clock),
-	.pp_out_lw_axi_reset_export				(pp_out_lw_axi_reset),
-	.pp_out_lw_axi_sigma_export				(pp_out_lw_axi_sigma),
-	.pp_out_lw_axi_rho_export				(pp_out_lw_axi_rho),
-	.pp_out_lw_axi_beta_export				(pp_out_lw_axi_beta),
-	.pp_out_lw_axi_x0_export				(pp_out_lw_axi_x0),
-	.pp_out_lw_axi_y0_export				(pp_out_lw_axi_y0),
-	.pp_out_lw_axi_z0_export				(pp_out_lw_axi_z0),
+	.pp_out_lw_axi_clock_external_connection_export				(pp_out_lw_axi_clock),
+	.pp_out_lw_axi_reset_external_connection_export				(pp_out_lw_axi_reset),
+	.pp_out_lw_axi_sigma_external_connection_export				(pp_out_lw_axi_sigma),
+	.pp_out_lw_axi_rho_external_connection_export				(pp_out_lw_axi_rho),
+	.pp_out_lw_axi_beta_external_connection_export				(pp_out_lw_axi_beta),
+	.pp_out_lw_axi_x0_external_connection_export				(pp_out_lw_axi_x0),
+	.pp_out_lw_axi_y0_external_connection_export				(pp_out_lw_axi_y0),
+	.pp_out_lw_axi_z0_external_connection_export				(pp_out_lw_axi_z0),
 
 	// AV Config
 	.av_config_SCLK							(FPGA_I2C_SCLK),

@@ -386,9 +386,9 @@ wire [31:0] pp_out_lw_axi_clock, pp_out_lw_axi_reset ;
 wire [31:0] pp_out_lw_axi_sigma, pp_out_lw_axi_rho, pp_out_lw_axi_beta ; // parameters
 wire [31:0] pp_out_lw_axi_x0, pp_out_lw_axi_y0, pp_out_lw_axi_z0 ; // initial conditions
 
-assign pp_in_axi_x = x_output ; // need to sign extend
-assign pp_in_axi_y = y_output ;
-assign pp_in_axi_z = z_output ;
+assign pp_in_axi_x = ({{5{x_output[26]}}, {x_output}}); // sign extend most significant sign bit --> total 32 bit
+assign pp_in_axi_y = ({{5{y_output[26]}}, {y_output}}) ;
+assign pp_in_axi_z = ({{5{z_output[26]}}, {z_output}}) ;
 //=======================================================
 //  instantiation of synthesizable verilog from modelSim at the top level
 //=======================================================
@@ -397,8 +397,8 @@ assign pp_in_axi_z = z_output ;
 integrator DUT   (		.x(x_output), 
 							   .y(y_output),
 							   .z(z_output),
-							   .clk(CLOCK_50), // pp_out_lw_axi_clock
-							   .reset(~KEY[0]), // pp_out_lw_axi_reset
+							   .clk(pp_out_lw_axi_clock[0]), 
+							   .reset(pp_out_lw_axi_reset[0]), 
 							   .InitialX(27'sb1_111111_00000_00000_00000_00000), // default initial conditions, x(0) = -1 
 							   .InitialY(27'sb0_000000_00011_00110_01100_11010), // y(0) = 0.1
 							   .InitialZ(27'sb0_011001_00000_00000_00000_00000), // z(0) = 25 
@@ -424,9 +424,9 @@ Computer_System The_System (
 	// OUTPUTS from the FPGA, INPUT to HPS
 	.pp_in_axi_x_export						(pp_in_axi_x),
 	.pp_in_axi_y_export						(pp_in_axi_y),
-	.pp_in_axi_z_export						(pp_in_axi),
+	.pp_in_axi_z_export						(pp_in_axi_z),
 	// INPUTS to the FPGA, OUTPUT from HPS
-	.pp_out_lw_axi_clock_export				(pp_out_lw_axi),
+	.pp_out_lw_axi_clock_export				(pp_out_lw_axi_clock),
 	.pp_out_lw_axi_reset_export				(pp_out_lw_axi_reset),
 	.pp_out_lw_axi_sigma_export				(pp_out_lw_axi_sigma),
 	.pp_out_lw_axi_rho_export				(pp_out_lw_axi_rho),

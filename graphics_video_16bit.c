@@ -18,8 +18,45 @@
 #include <math.h>
 //#include "address_map_arm_brl4.h"
 
+
+// lab 1 week 3 (additional libraries) --> add "-lpthread" to "gcc graphics..."
+#include <pthread.h>
+#include <semaphore.h>
+#include <stdbool.h>
+
+// lab 1 week 3 (fix2float conversions)
+#define int2fix(a)	(((int)(a)) << 20)
+#define fix2int(a)	((signed char)((a) >> 20))
+#define float2fix(a) (int)(a*1048576) // 2^20 = 1048576
+#define	fix2float(a)  (((float)(a))/1048576.0)
+
+// lab 1 week 3 (macros)
+// default initial conditions
+#define DEFAULT_X0				float2fix(-1.0) // uhhh negative value how
+#define DEFAULT_Y0				float2fix(0.1)
+#define DEFAULT_Z0				float2fix(25.0)
+// default parameters
+#define DEFAULT_SIGMA			float2fix(10.0) 
+#define DEFAULT_RHO				float2fix(28.0)
+#define DEFAULT_BETA            float2fix(2.6666666) // 8/3
+
+
+// lab 1 week 3 (global variables)
+char input_buffer[64]; // accept keyboard inputs 
+int delay_time; // control pace of drawing
+bool goFlag = 0; // if true, integrator_thread run
+
+
+// lab 1 week 3 (global objects of type relative to pthreads --> mutex objects, semaphores)
+// access to text buffer
+pthread_mutex_t input_buffer_lock= PTHREAD_MUTEX_INITIALIZER;
+// delay_time protection
+pthread_mutex_t delay_time_lock= PTHREAD_MUTEX_INITIALIZER; // do i need???
+// semaphores
+sem_t reset_semaphore, user_input_semaphore ; // tell user_input_thread that reset (and initial condition, parameters) is set, ready for user input
+
 // video display
-#define SDRAM_BASE            0xC0000000
+#define SDRAM_BASE            0xC0000000 // hardware base address of axi bus
 #define SDRAM_END             0xC3FFFFFF
 #define SDRAM_SPAN			  0x04000000
 // characters
@@ -27,16 +64,16 @@
 #define FPGA_CHAR_END         0xC9001FFF
 #define FPGA_CHAR_SPAN        0x00002000
 /* Cyclone V FPGA devices */
-#define HW_REGS_BASE          0xff200000
+#define HW_REGS_BASE          0xff200000 // hardware base address of lw axi bus
 //#define HW_REGS_SPAN        0x00200000 
 #define HW_REGS_SPAN          0x00005000 
 
-// lab 1 week 3
-// axi bus marcos for pio offset
-#define X_PIO_READ 			  0x10
+// lab 1 week 3 (pio base address)
+// axi bus marcos for pio offset 
+#define X_PIO_READ 			  0x10 // offsets
 #define Y_PIO_READ 			  0x20
 #define Z_PIO_READ 			  0x30
-// lw axi bus marcos for pio offset
+// lw axi bus marcos for pio offset 
 #define CLOCK_PIO 			  0x10
 #define RESET_PIO 			  0x20
 #define SIGMA_PIO 			  0x30
@@ -57,7 +94,8 @@ void VGA_Vline(int, int, int, short) ;
 void VGA_Hline(int, int, int, short) ;
 void VGA_disc (int, int, int, short);
 void VGA_circle (int, int, int, int);
-// 16-bit primary colors
+// 16-bit primary colors 
+// 16 bit RGB color value computed according to consecutive addressing (5 bit R, 6 bit G, 5 bit B --> 16 bit RGB color space according to Altera video IP cores)
 #define red  (0+(0<<5)+(31<<11))
 #define dark_red (0+(0<<5)+(15<<11))
 #define green (0+(63<<5)+(0<<11))
@@ -73,17 +111,17 @@ void VGA_circle (int, int, int, int);
 int colors[] = {red, dark_red, green, dark_green, blue, dark_blue, 
 		yellow, cyan, magenta, gray, black, white};
 
-// pixel macro
+// pixel macro --> draw pixel routine that associate pixel w/ address according to consecutive addressing mode
 #define VGA_PIXEL(x,y,color) do{\
 	int  *pixel_ptr ;\
-	pixel_ptr = (int*)((char *)vga_pixel_ptr + (((y)*640+(x))<<1)) ; \
+	pixel_ptr = (int*)((char *)vga_pixel_ptr + (((y)*640+(x))<<1)) ; \ // 16 bit format in xy fornat
 	*(short *)pixel_ptr = (color);\
 } while(0)
 
 // the light weight buss base
 void *h2p_lw_virtual_base;
 
-// lab 1 week 3
+// lab 1 week 3 (pio pointers)
 // axi bus pio pointer
 volatile int * x_pio_read_ptr = NULL ; // signed int, i should use 32 bit fix pt?
 volatile int * y_pio_read_ptr = NULL ;
@@ -112,6 +150,127 @@ int fd;
 // measure time
 struct timeval t1, t2;
 double elapsedTime;
+
+// lab 1 week 3 (pthreads)
+// Thread 1: reset thread
+void * reset_thread() {
+	while(1) {
+		// waiting to be signaled by user_input_thread (user type in "reset" to command line interface)
+		sem_wait(&reset_semaphore) ;
+		
+		// clear the text
+		VGA_text_clear();
+
+		// stop the animation
+		goFlag = 0;
+
+		pthread_mutex_lock(&input_buffer_lock);
+		// actual enter
+		// use default values?
+		// default x0, y0, z0, sigma, rho, beta
+		printf("Default values? (y):") ;
+		j = scanf("&s", input_buffer) ;
+		// unlock the input_buffer
+		pthread_mutex_unlock(&input_buffer_lock);
+
+		// set initial conditions?
+		// xy addressing?
+		// for xy projection?
+		vertical_coord = y_pio_read_ptr ;
+		horizontal_coord = x_pio_read_ptr ;
+		// for xz projection?
+
+		// for yz projection?
+
+		// reset the FPGA state machine
+		*clock_pio_ptr = 0;
+		*reset_pio_ptr = 0;
+		*reset_pio_ptr = 1; // have not yet reset the integrator because have not yet provide a positive edge of the clock
+		*clock_pio_ptr = 1; // but now with reset high, toggle the clock high to 1 (positive edge of the clock with the reset input high) --> satisfies the reset condition and resets the integrator
+		// now put clock and reset back to low
+		*clock_pio_ptr = 0;
+		*reset_pio_ptr = 0; 
+		
+		// everytime the c program toggles the clock 1 to 0, step the integrator by one step
+		// clock the integrators
+		*clock_pio_ptr = 1;
+		*clock_pio_ptr = 0;
+
+		// initialize the previous states 
+		horiz_prev = (int)(-fix2float(*(horizontal_coord))*scale_factor) ;
+		vert_prev = (int)(-fix2float(*(vertical_coord))*scale_factor) ;
+
+		// clear screen
+		VGA_box(0, 0, 639, 479, black);
+
+		// start the animation
+		goFlag = 1 ;
+
+		// start the user input thread
+		sem_post(&user_input_semaphore);
+
+	} // end while(1)
+}
+
+// Thread 2: user input thread (command line interface)
+void * user_input_thread() {
+	while(1) {
+		// wait for reset_thread to be done
+		sem_wait(&user_input_semaphore) ;
+
+		pthread_mutex_lock(&input_buffer_lock);
+		// command line interface
+		printf("Enter command: ") ;
+		j = scanf("%s", input_buffer) ;
+		if (strcmp(input_buffer, "s")==0) { // slow down plotting
+			delay_time = (delay_time>5242888)?delay_time:(delay_time<<1) ;
+		} else if (strcmp(input_buffer, "f")==0) { // fast plotting
+			delay_time = (delay_time<2)?delay_time:(delay_time>>1);
+		} else if (strcmp(input_buffer, "p")==0) {
+			goFlag = (goFlag==1)?0:1 ;
+		} else if (strcmp(input_buffer, "reset")==0) {
+			sem_post(&reset_semaphore) ;
+			sem_wait(&user_input_semaphore) ;
+		}
+		pthread_mutex_unlock(&input_buffer_lock);
+		sem_post(&user_input_semaphore) ;
+	} // end while(1)
+}
+
+// Thread 3: integrator thread
+// always run in background?
+// actually do plotting and write text (but only if goFlag true)
+void * integrator_thread() {
+	while(1) {
+		if (!goFlag) {
+			// waiting for plotting to start...
+			VGA_text (0, 55, "Lorenz System Demo");
+			char text_title[40] = "ECE 5760\0" ;
+			VGA_text(0, 54, text_title) ;
+		}
+		if (goFlag) {
+			// clock the integrators
+			*clock_pio_ptr = 1; // positive edge of clock, xyz reg assume the value of xyznew
+			*clock_pio_ptr = 0;
+
+			// slow down drawing --> control pace of plotting
+			usleep(delay_time) ;
+
+			// draw to the screen
+			VGA_line(horiz_prev + 320,
+					 vert_prev + 240,
+					(int)(-fix2float(*(horizontal_coord))*scale_factor) + 320,
+					(int)(-fix2float(*(vertifcal_coord))*scale_factor) + 240,
+					green) ;
+
+			// store previous value
+			horiz_prev = (int)(-fix2float(*(horizontal_coord))*scale_factor) ;
+			vert_prev = (int)(-fix2float(*(vertical_coord))*scale_factor) ;
+		}
+	} // end while(1)
+}
+
+
 	
 int main(void)
 {
@@ -214,7 +373,36 @@ int main(void)
 	// G bits 5-10  mask 0x07e0
 	// B bits 0-4   mask 0x001f
 	// so color = B+(G<<5)+(R<<11);
-	
+
+	// lab 1 week 3 (declare objects of type pthread_t and initialize semaphores)
+
+	// the thread identifiers
+	pthread_t thread_reset_thread, thread_user_input_thread, thread_integrator_thread;
+
+	// the semaphore inits
+	// reset_semaphore is not ready because nothing has been input yet
+	sem_init(&reset_semaphore, 0, 0); // 3rd argument is initial condition
+	// user_input_semaphore is ready to take user input at init time
+	sem_init(&user_input_semaphore, 0, 1);
+
+	// for portability, explicitly create threads in a joinable state (system runs until thread returns, but none returns)
+	// thread attribute used here to allow JOIN
+	pthread_attr_t attr;
+	pthread_attr_init(&attr);
+	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
+
+	//create the threads --> associate pthread functions created above w/ pthread objects created in main
+	pthread_create(&thread_reset_thread,NULL,reset_thread,NULL);
+	pthread_create(&thread_user_input_thread,NULL,user_input_thread,NULL);
+	pthread_create(&thread_integrator_thread,NULL,integrator_thread,NULL);
+
+	// start scheduler, start scheduling these threads, keep scheduling until thread joins (never will)
+	pthread_join(thread_reset_thread, NULL);
+	pthread_join(thread_user_input_thread, NULL);
+	pthread_join(thread_integrator_thread, NULL);
+	return 0;
+
+	// i should delete this whole while(1) ***just showing all the vga graphics options
 	while(1) 
 	{
 		// start timer

@@ -276,7 +276,7 @@ void * reset_thread() {
 		*clock_pio_ptr = 1; // but now with reset high, toggle the clock high to 1 (positive edge of the clock with the reset input high) --> satisfies the reset condition and resets the integrator
 		// now put clock and reset back to low
 		*clock_pio_ptr = 0;
-		*reset_pio_ptr = 0; 
+		*reset_pio_ptr = 1; 
 		
 		// everytime the c program toggles the clock 1 to 0, step the integrator by one step
 		// clock the integrators
@@ -436,6 +436,7 @@ void * integrator_thread() {
 	
 int main(void)
 {
+	
   	
 	// === need to mmap: =======================
 	// FPGA_CHAR_BASE

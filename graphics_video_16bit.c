@@ -65,9 +65,9 @@ volatile signed int *vertical_coord_yz = NULL ;
 volatile signed int *horizontal_coord_xy = NULL ;
 volatile signed int *vertical_coord_xy = NULL ;
 // xyz output values from FPGA to ARM are fix-point --> fix2float --> some values very small (e.g 0.6, 0.1, 0.045) --> scale by some factor to be visible on 640x480 pixel VGA screen
-float scale_factor = 20.0;
+float scale_factor = 5.0;
 // control pace of drawing (stall for a bit after each clock pulse in integrator_thread)
-unsigned int delay_time = 10000;
+unsigned int delay_time = 1000;
 // if 1 --> integrator resumes, if 0 --> integrator pauses (ARM stop sending clock pulses to FPGA's integrator)
 int goFlag = PAUSE;
 // character array (max 63 character, one null terminator), accept keyboard inputs
@@ -276,7 +276,7 @@ void * reset_thread() {
 		*clock_pio_ptr = 1; // but now with reset high, toggle the clock high to 1 (positive edge of the clock with the reset input high) --> satisfies the reset condition and resets the integrator
 		// now put clock and reset back to low
 		*clock_pio_ptr = 0;
-		*reset_pio_ptr = 0; 
+		*reset_pio_ptr = 1; 
 		
 		// everytime the c program toggles the clock 1 to 0, step the integrator by one step
 		// clock the integrators
@@ -369,51 +369,32 @@ void * integrator_thread() {
 			VGA_text (20, 9, text_buffer);
 			sprintf(text_buffer, "BETA: %f", text_beta);
 			VGA_text (20, 10, text_buffer);
-
-			//draw to the screen
-			//VGA_line(int x1, int y1, int x2, int y2, short c)
-			//draws a line segment between previous position (x1, y1) and current position (x2, y2)
-
-			//for xz projection
-			VGA_line(horiz_prev_xz + XZ_ORIGIN_H,
-					 vert_prev_xz + XZ_ORIGIN_V,
-					(int)(-fix2float(*(horizontal_coord_xz))*scale_factor) + XZ_ORIGIN_H,
-					(int)(-fix2float(*(vertical_coord_xz))*scale_factor) + XZ_ORIGIN_V,
-					red) ;
-
-			// for yz projection
-			VGA_line(horiz_prev_yz + YZ_ORIGIN_H,
-					 vert_prev_yz + YZ_ORIGIN_V,
-					(int)(-fix2float(*(horizontal_coord_yz))*scale_factor) + YZ_ORIGIN_H,
-					(int)(-fix2float(*(vertical_coord_yz))*scale_factor) + YZ_ORIGIN_V,
-					green) ;
-
-			// for xy projection
-			VGA_line(horiz_prev_xy + XY_ORIGIN_H,
-					 vert_prev_xy + XY_ORIGIN_V,
-					(int)(-fix2float(*(horizontal_coord_xy))*scale_factor) + XY_ORIGIN_H,
-					(int)(-fix2float(*(vertical_coord_xy))*scale_factor) + XY_ORIGIN_V,
-					blue) ;
-
-			// store previous value
-
-			// for xz projection
-			horiz_prev_xz = (int)(-fix2float(*(horizontal_coord_xz))*scale_factor) ;
-			vert_prev_xz = (int)(-fix2float(*(vertical_coord_xz))*scale_factor) ;
-			// for yz projection
-			horiz_prev_yz = (int)(-fix2float(*(horizontal_coord_yz))*scale_factor) ;
-			vert_prev_yz = (int)(-fix2float(*(vertical_coord_yz))*scale_factor) ;
-			// for xy projection
-			horiz_prev_xy = (int)(-fix2float(*(horizontal_coord_xy))*scale_factor) ;
-			vert_prev_xy = (int)(-fix2float(*(vertical_coord_xy))*scale_factor) ;
-
 		}
 		if (goFlag == RESUME) {
+			static int resume_count = 0;
+if (resume_count < 5) {
+printf("RESUME running! goFlag=%d\n", goFlag);
+resume_count++;
+}
 			// clock the integrators
 			*clock_pio_ptr = 1; // positive edge of clock, xyz reg assume the value of xyznew
-			usleep(100000);
 			*clock_pio_ptr = 0;
-			usleep(100000);
+
+			 // DEBUG - print first 20 iterations
+    static int debug_count = 0;
+    if (debug_count < 20) {
+        printf("Iter %d: x=%d, y=%d, z=%d | ",
+               debug_count,
+               *x_pio_read_ptr, *y_pio_read_ptr, *z_pio_read_ptr);
+        printf("float: x=%.3f, y=%.3f, z=%.3f | ",
+               fix2float(*x_pio_read_ptr),
+               fix2float(*y_pio_read_ptr),
+               fix2float(*z_pio_read_ptr));
+        printf("scaled: x=%d, z=%d\n",
+               (int)(fix2float(*x_pio_read_ptr)*scale_factor),
+               (int)(fix2float(*z_pio_read_ptr)*scale_factor));
+        debug_count++;
+    }
 
 			// slow down drawing --> control pace of plotting
 			usleep(delay_time) ;

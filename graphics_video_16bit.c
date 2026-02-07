@@ -65,9 +65,9 @@ volatile signed int *vertical_coord_yz = NULL ;
 volatile signed int *horizontal_coord_xy = NULL ;
 volatile signed int *vertical_coord_xy = NULL ;
 // xyz output values from FPGA to ARM are fix-point --> fix2float --> some values very small (e.g 0.6, 0.1, 0.045) --> scale by some factor to be visible on 640x480 pixel VGA screen
-float scale_factor = 10.0;
+float scale_factor = 1.0;
 // control pace of drawing (stall for a bit after each clock pulse in integrator_thread)
-unsigned int delay_time = 10000;
+unsigned int delay_time;
 // if 1 --> integrator resumes, if 0 --> integrator pauses (ARM stop sending clock pulses to FPGA's integrator)
 int goFlag = PAUSE;
 // character array (max 63 character, one null terminator), accept keyboard inputs
@@ -84,12 +84,12 @@ int signed vert_prev_yz;
 int signed horiz_prev_xy;
 int signed vert_prev_xy;
 // variables to be display later on vga text
-float text_x0 = DEFAULT_X0;
-float text_y0 = DEFAULT_Y0;
-float text_z0 = DEFAULT_Z0;
-float text_sigma = DEFAULT_SIGMA;
-float text_rho = DEFAULT_RHO;
-float text_beta = DEFAULT_BETA;
+float text_x0;
+float text_y0;
+float text_z0;
+float text_sigma;
+float text_rho;
+float text_beta;
 
 
 // lab 1 week 3 (global objects of type relative to pthreads --> mutex objects, semaphores)
@@ -514,18 +514,6 @@ int main(void)
 	x_pio_read_ptr =(unsigned int *)(h2p_lw_virtual_base + X_PIO_READ);
 	y_pio_read_ptr =(unsigned int *)(h2p_lw_virtual_base + Y_PIO_READ);
 	z_pio_read_ptr =(unsigned int *)(h2p_lw_virtual_base + Z_PIO_READ);
-
-	// to prevent horizontal_coord to be NULL when integrator_thread starts immediately and goFlag = PAUSE
-	//HEREEEE
-	// for xz projection?
-	vertical_coord_xz = x_pio_read_ptr ;
-	horizontal_coord_xz = z_pio_read_ptr ;
-	// for yz projection?
-	vertical_coord_yz = y_pio_read_ptr ;
-	horizontal_coord_yz = z_pio_read_ptr ;
-	// for xy projection? (might be upside down unless make it negative)
-	vertical_coord_xy = x_pio_read_ptr ;
-	horizontal_coord_xy = y_pio_read_ptr ;
 
 
 	// === get VGA char addr =====================

@@ -40,12 +40,12 @@
 #define DEFAULT_RHO				28.0
 #define DEFAULT_BETA            2.6666666 // 8/3
 // define three projection's plot origin on 640x480 pixel VGA screen
-#define XZ_ORIGIN_H				160
+#define XZ_ORIGIN_H				250
 #define XZ_ORIGIN_V				120
-#define YZ_ORIGIN_H				480
+#define YZ_ORIGIN_H				550
 #define YZ_ORIGIN_V				120
 #define XY_ORIGIN_H				320
-#define XY_ORIGIN_V				360
+#define XY_ORIGIN_V				330
 // define where initial condition and parameter text should start writing on 640x480 pixel VGA screen
 // let's do 5 pixel vertical distance between each line --> REMINDER TO MYSELF
 #define INITIAL_PARAM_TEXT_START_H				20
@@ -65,7 +65,7 @@ volatile signed int *vertical_coord_yz = NULL ;
 volatile signed int *horizontal_coord_xy = NULL ;
 volatile signed int *vertical_coord_xy = NULL ;
 // xyz output values from FPGA to ARM are fix-point --> fix2float --> some values very small (e.g 0.6, 0.1, 0.045) --> scale by some factor to be visible on 640x480 pixel VGA screen
-float scale_factor = 5.0;
+float scale_factor = 3.0;
 // control pace of drawing (stall for a bit after each clock pulse in integrator_thread)
 unsigned int delay_time = 1000;
 // if 1 --> integrator resumes, if 0 --> integrator pauses (ARM stop sending clock pulses to FPGA's integrator)
@@ -352,24 +352,11 @@ void * user_input_thread() {
 // actually do plotting and write text (but only if goFlag RESUME, 1)
 void * integrator_thread() {
 	while(1) {
-		if (goFlag == PAUSE) {
-			// no clock pulses send to integrator, always animate same image
+		// if (goFlag == PAUSE) {
+		// 	// no clock pulses send to integrator, always animate same image
+		// 	printf("paused!\n");
 
-			// text that shows initial conditions and parameters
-			char text_buffer[256]; 
-			sprintf(text_buffer, "X0: %f", text_x0);
-			VGA_text (20, 5, text_buffer);
-			sprintf(text_buffer, "Y0: %f", text_y0);
-			VGA_text (20, 6, text_buffer);
-			sprintf(text_buffer, "Z0: %f", text_z0);
-			VGA_text (20, 7, text_buffer);
-			sprintf(text_buffer, "SIGMA: %f", text_sigma);
-			VGA_text (20, 8, text_buffer);
-			sprintf(text_buffer, "RHO: %f", text_rho);
-			VGA_text (20, 9, text_buffer);
-			sprintf(text_buffer, "BETA: %f", text_beta);
-			VGA_text (20, 10, text_buffer);
-		}
+		// }
 		if (goFlag == RESUME) {
 
 			// clock the integrators
@@ -382,17 +369,21 @@ void * integrator_thread() {
 			// text that shows initial conditions and parameters
 			char text_buffer[256]; 
 			sprintf(text_buffer, "X0: %f", text_x0);
-			VGA_text (20, 5, text_buffer);
+			VGA_text (5, 53, text_buffer);
 			sprintf(text_buffer, "Y0: %f", text_y0);
-			VGA_text (20, 6, text_buffer);
+			VGA_text (5, 54, text_buffer);
 			sprintf(text_buffer, "Z0: %f", text_z0);
-			VGA_text (20, 7, text_buffer);
+			VGA_text (5, 55, text_buffer);
 			sprintf(text_buffer, "SIGMA: %f", text_sigma);
-			VGA_text (20, 8, text_buffer);
+			VGA_text (5, 56, text_buffer);
 			sprintf(text_buffer, "RHO: %f", text_rho);
-			VGA_text (20, 9, text_buffer);
+			VGA_text (5, 57, text_buffer);
 			sprintf(text_buffer, "BETA: %f", text_beta);
-			VGA_text (20, 10, text_buffer);
+			VGA_text (5, 58, text_buffer);
+			// text that shows xyz projection label
+			VGA_text (12, 27, "XZ Projection");
+			VGA_text (50, 27, "YZ Projection");
+			VGA_text (35, 52, "XY Projection");
 
 			//draw to the screen
 			//VGA_line(int x1, int y1, int x2, int y2, short c)

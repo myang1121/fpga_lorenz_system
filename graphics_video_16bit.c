@@ -65,9 +65,9 @@ volatile signed int *vertical_coord_yz = NULL ;
 volatile signed int *horizontal_coord_xy = NULL ;
 volatile signed int *vertical_coord_xy = NULL ;
 // xyz output values from FPGA to ARM are fix-point --> fix2float --> some values very small (e.g 0.6, 0.1, 0.045) --> scale by some factor to be visible on 640x480 pixel VGA screen
-float scale_factor = 1.0;
+float scale_factor = 5.0;
 // control pace of drawing (stall for a bit after each clock pulse in integrator_thread)
-unsigned int delay_time;
+unsigned int delay_time = 10000;
 // if 1 --> integrator resumes, if 0 --> integrator pauses (ARM stop sending clock pulses to FPGA's integrator)
 int goFlag = PAUSE;
 // character array (max 63 character, one null terminator), accept keyboard inputs
@@ -84,12 +84,12 @@ int signed vert_prev_yz;
 int signed horiz_prev_xy;
 int signed vert_prev_xy;
 // variables to be display later on vga text
-float text_x0;
-float text_y0;
-float text_z0;
-float text_sigma;
-float text_rho;
-float text_beta;
+float text_x0 = DEFAULT_X0;
+float text_y0 = DEFAULT_Y0;
+float text_z0 = DEFAULT_Z0;
+float text_sigma = DEFAULT_SIGMA;
+float text_rho = DEFAULT_RHO;
+float text_beta = DEFAULT_BETA;
 
 
 // lab 1 week 3 (global objects of type relative to pthreads --> mutex objects, semaphores)
@@ -210,7 +210,6 @@ void * reset_thread() {
 		// default x0, y0, z0, sigma, rho, beta
 		printf("Default values? (y/n):") ;
 		j = scanf("%s", input_buffer) ; // read a string from command line interface and store in input buffer --> j is 1 if user input something, 0 if nothing is read
-		printf("get past scanf rst"); //we arent getting past this, dont worry about the rest of the thread
 		
 
 		if (strcmp(input_buffer, "y")==0) { // if y to default value
@@ -222,6 +221,13 @@ void * reset_thread() {
 			*(sigma_pio_ptr) = float2fix(DEFAULT_SIGMA);
 			*(rho_pio_ptr) = float2fix(DEFAULT_RHO);
 			*(beta_pio_ptr) = float2fix(DEFAULT_BETA);
+
+			text_x0 = DEFAULT_X0;
+			text_y0 = DEFAULT_Y0;
+			text_z0 = DEFAULT_Z0;
+			text_sigma = DEFAULT_SIGMA;
+			text_rho = DEFAULT_RHO;
+			text_beta = DEFAULT_BETA;
 
 		} else if (strcmp(input_buffer, "n")==0) { // if n to default value
 			// ask user for new initial condition values and new parameters, then set new initial condition and new parameter
@@ -306,8 +312,6 @@ void * user_input_thread() {
 		// command line interface
 		printf("Enter command (f, s, p, r, c, sigma, rho, beta, reset): ") ;
 		j = scanf("%s", input_buffer) ;
-		printf("get past scanf usrinput");//we arent getting past this, dont worry about the rest of the thread
-
 
 		// strcmp --> string compare, if input_buffer's string value identical to "s", output 0
 		if (strcmp(input_buffer, "f")==0) { // speed up plotting
@@ -341,7 +345,6 @@ void * user_input_thread() {
 		}
 		sem_post(&user_input_semaphore) ;
 	} // end while(1)
-	printf("Thread 2 done");
 }
 
 // Thread 3: integrator thread
@@ -351,13 +354,10 @@ void * integrator_thread() {
 	while(1) {
 		if (goFlag == PAUSE) {
 			// no clock pulses send to integrator, always animate same image
-			printf("pause");
 
 			// text that shows initial conditions and parameters
 			char text_buffer[256]; 
-			printf("pause 1");
 			sprintf(text_buffer, "X0: %f", text_x0);
-			printf("pause 2");
 			VGA_text (20, 5, text_buffer);
 			sprintf(text_buffer, "Y0: %f", text_y0);
 			VGA_text (20, 6, text_buffer);
@@ -379,23 +379,21 @@ void * integrator_thread() {
 					 vert_prev_xz + XZ_ORIGIN_V,
 					(int)(-fix2float(*(horizontal_coord_xz))*scale_factor) + XZ_ORIGIN_H,
 					(int)(-fix2float(*(vertical_coord_xz))*scale_factor) + XZ_ORIGIN_V,
-					white) ;
+					red) ;
 
 			// for yz projection
 			VGA_line(horiz_prev_yz + YZ_ORIGIN_H,
 					 vert_prev_yz + YZ_ORIGIN_V,
 					(int)(-fix2float(*(horizontal_coord_yz))*scale_factor) + YZ_ORIGIN_H,
 					(int)(-fix2float(*(vertical_coord_yz))*scale_factor) + YZ_ORIGIN_V,
-					white) ;
+					green) ;
 
 			// for xy projection
 			VGA_line(horiz_prev_xy + XY_ORIGIN_H,
 					 vert_prev_xy + XY_ORIGIN_V,
 					(int)(-fix2float(*(horizontal_coord_xy))*scale_factor) + XY_ORIGIN_H,
 					(int)(-fix2float(*(vertical_coord_xy))*scale_factor) + XY_ORIGIN_V,
-					white) ;
-
-			printf("1");
+					blue) ;
 
 			// store previous value
 
@@ -408,11 +406,9 @@ void * integrator_thread() {
 			// for xy projection
 			horiz_prev_xy = (int)(-fix2float(*(horizontal_coord_xy))*scale_factor) ;
 			vert_prev_xy = (int)(-fix2float(*(vertical_coord_xy))*scale_factor) ;
-			printf("2");
 
 		}
 		if (goFlag == RESUME) {
-			printf("resume");
 			// clock the integrators
 			*clock_pio_ptr = 1; // positive edge of clock, xyz reg assume the value of xyznew
 			*clock_pio_ptr = 0;
@@ -439,29 +435,26 @@ void * integrator_thread() {
 			//VGA_line(int x1, int y1, int x2, int y2, short c)
 			//draws a line segment between previous position (x1, y1) and current position (x2, y2)
 
- 
-			printf("3");
-
 			// for xz projection
 			VGA_line(horiz_prev_xz + XZ_ORIGIN_H,
 					 vert_prev_xz + XZ_ORIGIN_V,
 					(int)(-fix2float(*(horizontal_coord_xz))*scale_factor) + XZ_ORIGIN_H,
 					(int)(-fix2float(*(vertical_coord_xz))*scale_factor) + XZ_ORIGIN_V,
-					white) ;
+					red) ;
 
 			// for yz projection
 			VGA_line(horiz_prev_yz + YZ_ORIGIN_H,
 					 vert_prev_yz + YZ_ORIGIN_V,
 					(int)(-fix2float(*(horizontal_coord_yz))*scale_factor) + YZ_ORIGIN_H,
 					(int)(-fix2float(*(vertical_coord_yz))*scale_factor) + YZ_ORIGIN_V,
-					white) ;
+					green) ;
 
 			// for xy projection
 			VGA_line(horiz_prev_xy + XY_ORIGIN_H,
 					 vert_prev_xy + XY_ORIGIN_V,
 					(int)(-fix2float(*(horizontal_coord_xy))*scale_factor) + XY_ORIGIN_H,
 					(int)(-fix2float(*(vertical_coord_xy))*scale_factor) + XY_ORIGIN_V,
-					white) ;
+					blue) ;
 
 			// store previous value
 
@@ -474,7 +467,6 @@ void * integrator_thread() {
 			// for xy projection
 			horiz_prev_xy = (int)(-fix2float(*(horizontal_coord_xy))*scale_factor) ;
 			vert_prev_xy = (int)(-fix2float(*(vertical_coord_xy))*scale_factor) ;
-			printf("4");
 		}
 	} // end while(1)
 }
@@ -514,6 +506,18 @@ int main(void)
 	x_pio_read_ptr =(unsigned int *)(h2p_lw_virtual_base + X_PIO_READ);
 	y_pio_read_ptr =(unsigned int *)(h2p_lw_virtual_base + Y_PIO_READ);
 	z_pio_read_ptr =(unsigned int *)(h2p_lw_virtual_base + Z_PIO_READ);
+
+	// to prevent horizontal_coord to be NULL when integrator_thread starts immediately and goFlag = PAUSE
+	//HEREEEE
+	// for xz projection?
+	vertical_coord_xz = x_pio_read_ptr ;
+	horizontal_coord_xz = z_pio_read_ptr ;
+	// for yz projection?
+	vertical_coord_yz = y_pio_read_ptr ;
+	horizontal_coord_yz = z_pio_read_ptr ;
+	// for xy projection? (might be upside down unless make it negative)
+	vertical_coord_xy = x_pio_read_ptr ;
+	horizontal_coord_xy = y_pio_read_ptr ;
 
 
 	// === get VGA char addr =====================

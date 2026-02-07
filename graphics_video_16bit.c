@@ -65,7 +65,7 @@ volatile signed int *vertical_coord_yz = NULL ;
 volatile signed int *horizontal_coord_xy = NULL ;
 volatile signed int *vertical_coord_xy = NULL ;
 // xyz output values from FPGA to ARM are fix-point --> fix2float --> some values very small (e.g 0.6, 0.1, 0.045) --> scale by some factor to be visible on 640x480 pixel VGA screen
-float scale_factor = 5.0;
+float scale_factor = 20.0;
 // control pace of drawing (stall for a bit after each clock pulse in integrator_thread)
 unsigned int delay_time = 10000;
 // if 1 --> integrator resumes, if 0 --> integrator pauses (ARM stop sending clock pulses to FPGA's integrator)
@@ -411,7 +411,9 @@ void * integrator_thread() {
 		if (goFlag == RESUME) {
 			// clock the integrators
 			*clock_pio_ptr = 1; // positive edge of clock, xyz reg assume the value of xyznew
+			usleep(100000);
 			*clock_pio_ptr = 0;
+			usleep(100000);
 
 			// slow down drawing --> control pace of plotting
 			usleep(delay_time) ;

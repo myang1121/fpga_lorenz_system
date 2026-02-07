@@ -276,7 +276,7 @@ void * reset_thread() {
 		*clock_pio_ptr = 1; // but now with reset high, toggle the clock high to 1 (positive edge of the clock with the reset input high) --> satisfies the reset condition and resets the integrator
 		// now put clock and reset back to low
 		*clock_pio_ptr = 0;
-		*reset_pio_ptr = 1; 
+		*reset_pio_ptr = 0; 
 		
 		// everytime the c program toggles the clock 1 to 0, step the integrator by one step
 		// clock the integrators
@@ -371,30 +371,10 @@ void * integrator_thread() {
 			VGA_text (20, 10, text_buffer);
 		}
 		if (goFlag == RESUME) {
-			static int resume_count = 0;
-if (resume_count < 5) {
-printf("RESUME running! goFlag=%d\n", goFlag);
-resume_count++;
-}
+
 			// clock the integrators
 			*clock_pio_ptr = 1; // positive edge of clock, xyz reg assume the value of xyznew
 			*clock_pio_ptr = 0;
-
-			 // DEBUG - print first 20 iterations
-    static int debug_count = 0;
-    if (debug_count < 20) {
-        printf("Iter %d: x=%d, y=%d, z=%d | ",
-               debug_count,
-               *x_pio_read_ptr, *y_pio_read_ptr, *z_pio_read_ptr);
-        printf("float: x=%.3f, y=%.3f, z=%.3f | ",
-               fix2float(*x_pio_read_ptr),
-               fix2float(*y_pio_read_ptr),
-               fix2float(*z_pio_read_ptr));
-        printf("scaled: x=%d, z=%d\n",
-               (int)(fix2float(*x_pio_read_ptr)*scale_factor),
-               (int)(fix2float(*z_pio_read_ptr)*scale_factor));
-        debug_count++;
-    }
 
 			// slow down drawing --> control pace of plotting
 			usleep(delay_time) ;
@@ -527,41 +507,6 @@ int main(void)
     
     // Get the address that maps to the FPGA pixel buffer
 	vga_pixel_ptr =(unsigned int *)(vga_pixel_virtual_base);
-
-	
-
-	// ===========================================
-
-	/* create a message to be displayed on the VGA 
-          and LCD displays */
-	char text_top_row[40] = "DE1-SoC ARM/FPGA\0";
-	char text_bottom_row[40] = "Cornell ece5760\0";
-	char text_next[40] = "Graphics primitives\0";
-	char num_string[20], time_string[20] ;
-	char color_index = 0 ;
-	int color_counter = 0 ;
-	
-	// position of disk primitive
-	int disc_x = 0;
-	// position of circle primitive
-	int circle_x = 0 ;
-	// position of box primitive
-	int box_x = 5 ;
-	// position of vertical line primitive
-	int Vline_x = 350;
-	// position of horizontal line primitive
-	int Hline_y = 250;
-
-	//VGA_text (34, 1, text_top_row);
-	//VGA_text (34, 2, text_bottom_row);
-	// clear the screen
-	VGA_box (0, 0, 639, 479, 0x0000);
-	// clear the text
-	VGA_text_clear();
-	// write text
-	VGA_text (10, 1, text_top_row);
-	VGA_text (10, 2, text_bottom_row);
-	VGA_text (10, 3, text_next);
 	
 	// R bits 11-15 mask 0xf800
 	// G bits 5-10  mask 0x07e0

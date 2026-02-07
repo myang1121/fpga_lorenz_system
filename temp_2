@@ -1,0 +1,555 @@
+///////////////////////////////////////
+/// 640x480 version! 16-bit color
+/// Lorenz Attractor Visualization
+/// compile with
+/// gcc graphics_video_16bit.c -o gr -O2 -lm -lpthread
+///
+///////////////////////////////////////
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <sys/types.h>
+#include <sys/ipc.h> 
+#include <sys/shm.h> 
+#include <sys/mman.h>
+#include <sys/time.h> 
+#include <math.h>
+#include <pthread.h>
+#include <semaphore.h>
+#include <string.h>
+
+// fix2float conversions
+#define int2fix(a)	(((int)(a)) << 20)
+#define fix2int(a)	((signed char)((a) >> 20))
+#define float2fix(a) (int)(a*1048576) // 2^20 = 1048576
+#define	fix2float(a)  (((float)(a))/1048576.0)
+
+// default initial conditions
+#define DEFAULT_X0				-1.0
+#define DEFAULT_Y0				0.1
+#define DEFAULT_Z0				25.0
+// default parameters
+#define DEFAULT_SIGMA			10.0
+#define DEFAULT_RHO				28.0
+#define DEFAULT_BETA            2.6666666 // 8/3
+// define three projection's plot origin on 640x480 pixel VGA screen
+#define XZ_ORIGIN_H				220
+#define XZ_ORIGIN_V				120
+#define YZ_ORIGIN_H				480
+#define YZ_ORIGIN_V				120
+#define XY_ORIGIN_H				320
+#define XY_ORIGIN_V				360
+// for go flag
+#define PAUSE				0
+#define RESUME				1
+
+// global variables
+volatile signed int *horizontal_coord_xz = NULL;
+volatile signed int *vertical_coord_xz = NULL;
+volatile signed int *horizontal_coord_yz = NULL;
+volatile signed int *vertical_coord_yz = NULL;
+volatile signed int *horizontal_coord_xy = NULL;
+volatile signed int *vertical_coord_xy = NULL;
+
+float scale_factor = 4.0;
+unsigned int delay_time = 1000;
+int goFlag = PAUSE;
+char input_buffer[64];
+float value_buffer;
+int j;
+
+int signed horiz_prev_xz;
+int signed vert_prev_xz;
+int signed horiz_prev_yz;
+int signed vert_prev_yz;
+int signed horiz_prev_xy;
+int signed vert_prev_xy;
+
+float text_x0 = DEFAULT_X0;
+float text_y0 = DEFAULT_Y0;
+float text_z0 = DEFAULT_Z0;
+float text_sigma = DEFAULT_SIGMA;
+float text_rho = DEFAULT_RHO;
+float text_beta = DEFAULT_BETA;
+
+// pthread objects
+pthread_mutex_t input_buffer_lock = PTHREAD_MUTEX_INITIALIZER;
+sem_t reset_semaphore, user_input_semaphore;
+
+// video display
+#define SDRAM_BASE            0xC0000000
+#define SDRAM_SPAN			  0x04000000
+#define FPGA_CHAR_BASE        0xC9000000 
+#define FPGA_CHAR_SPAN        0x00002000
+#define HW_REGS_BASE          0xff200000
+#define HW_REGS_SPAN          0x00005000 
+
+// pio base address offsets
+#define CLOCK_PIO 			  0x10
+#define RESET_PIO 			  0x20
+#define SIGMA_PIO 			  0x30
+#define RHO_PIO 			  0x40
+#define BETA_PIO 			  0x50
+#define X0_PIO 			      0x60
+#define Y0_PIO 			      0x70
+#define Z0_PIO 			      0x80
+#define X_PIO_READ 			  0x90
+#define Y_PIO_READ 			  0x100
+#define Z_PIO_READ 			  0x110
+
+// graphics primitives
+void VGA_text(int, int, char *);
+void VGA_text_clear();
+void VGA_box(int, int, int, int, short);
+void VGA_line(int, int, int, int, short);
+
+// 16-bit primary colors
+#define red  (0+(0<<5)+(31<<11))
+#define green (0+(63<<5)+(0<<11))
+#define blue (31+(0<<5)+(0<<11))
+#define black (0x0000)
+
+// pixel macro
+#define VGA_PIXEL(x,y,color) do{\
+	int  *pixel_ptr;\
+	pixel_ptr = (int*)((char *)vga_pixel_ptr + (((y)*640+(x))<<1));\
+	*(short *)pixel_ptr = (color);\
+} while(0)
+
+void *h2p_lw_virtual_base;
+
+// pio pointers
+volatile signed int * x_pio_read_ptr = NULL;
+volatile signed int * y_pio_read_ptr = NULL;
+volatile signed int * z_pio_read_ptr = NULL;
+volatile unsigned int * clock_pio_ptr = NULL;
+volatile unsigned int * reset_pio_ptr = NULL;
+volatile unsigned int * sigma_pio_ptr = NULL;
+volatile unsigned int * rho_pio_ptr = NULL;
+volatile unsigned int * beta_pio_ptr = NULL;
+volatile signed int * x0_pio_ptr = NULL;
+volatile signed int * y0_pio_ptr = NULL;
+volatile signed int * z0_pio_ptr = NULL;
+
+volatile unsigned int * vga_pixel_ptr = NULL;
+void *vga_pixel_virtual_base;
+
+volatile unsigned int * vga_char_ptr = NULL;
+void *vga_char_virtual_base;
+
+int fd;
+
+// Thread 1: reset thread
+void * reset_thread() {
+	while(1) {
+		sem_wait(&reset_semaphore);
+		
+		VGA_text_clear();
+		goFlag = PAUSE;
+
+		printf("Default values? (y/n): ");
+		j = scanf("%s", input_buffer);
+		
+
+		if (strcmp(input_buffer, "y") == 0) {
+			*(x0_pio_ptr) = float2fix(DEFAULT_X0); 
+			*(y0_pio_ptr) = float2fix(DEFAULT_Y0);
+			*(z0_pio_ptr) = float2fix(DEFAULT_Z0);
+			*(sigma_pio_ptr) = float2fix(DEFAULT_SIGMA);
+			*(rho_pio_ptr) = float2fix(DEFAULT_RHO);
+			*(beta_pio_ptr) = float2fix(DEFAULT_BETA);
+
+			text_x0 = DEFAULT_X0;
+			text_y0 = DEFAULT_Y0;
+			text_z0 = DEFAULT_Z0;
+			text_sigma = DEFAULT_SIGMA;
+			text_rho = DEFAULT_RHO;
+			text_beta = DEFAULT_BETA;
+
+		} else if (strcmp(input_buffer, "n") == 0) {
+			printf("Input new initial conditions and parameters in floating point.\n");
+			printf("X0: ");
+			j = scanf("%f", &value_buffer);
+			text_x0 = value_buffer;
+			*(x0_pio_ptr) = float2fix(value_buffer);
+			printf("Y0: ");
+			j = scanf("%f", &value_buffer);
+			text_y0 = value_buffer;
+			*(y0_pio_ptr) = float2fix(value_buffer);
+			printf("Z0: ");
+			j = scanf("%f", &value_buffer);
+			text_z0 = value_buffer;
+			*(z0_pio_ptr) = float2fix(value_buffer);
+			printf("SIGMA: ");
+			j = scanf("%f", &value_buffer);
+			text_sigma = value_buffer;
+			*(sigma_pio_ptr) = float2fix(value_buffer);
+			printf("RHO: ");
+			j = scanf("%f", &value_buffer);
+			text_rho = value_buffer;
+			*(rho_pio_ptr) = float2fix(value_buffer);
+			printf("BETA: ");
+			j = scanf("%f", &value_buffer);
+			text_beta = value_buffer;
+			*(beta_pio_ptr) = float2fix(value_buffer);
+		} 
+
+		vertical_coord_xz = x_pio_read_ptr;
+		horizontal_coord_xz = z_pio_read_ptr;
+		vertical_coord_yz = y_pio_read_ptr;
+		horizontal_coord_yz = z_pio_read_ptr;
+		vertical_coord_xy = x_pio_read_ptr;
+		horizontal_coord_xy = y_pio_read_ptr;
+		
+		// reset the FPGA state machine
+		*clock_pio_ptr = 0;
+		*reset_pio_ptr = 0;  // Enter reset
+		*reset_pio_ptr = 1;  // Exit reset
+		*clock_pio_ptr = 1;  // Clock to load initial conditions
+		*clock_pio_ptr = 0;
+		*reset_pio_ptr = 1;  // Keep reset HIGH!
+		
+		// clock the integrators once
+		*clock_pio_ptr = 1;
+		*clock_pio_ptr = 0;
+
+		// initialize the previous states 
+		horiz_prev_xz = (int)(-fix2float(*(horizontal_coord_xz))*scale_factor);
+		vert_prev_xz = (int)(-fix2float(*(vertical_coord_xz))*scale_factor);
+		horiz_prev_yz = (int)(-fix2float(*(horizontal_coord_yz))*scale_factor);
+		vert_prev_yz = (int)(-fix2float(*(vertical_coord_yz))*scale_factor);
+		horiz_prev_xy = (int)(-fix2float(*(horizontal_coord_xy))*scale_factor);
+		vert_prev_xy = (int)(-fix2float(*(vertical_coord_xy))*scale_factor);
+
+		// clear screen
+		VGA_box(0, 0, 639, 479, black);
+
+		// start the animation
+		goFlag = RESUME;
+
+		sem_post(&user_input_semaphore);
+	}
+}
+
+// Thread 2: user input thread
+void * user_input_thread() {
+	while(1) {
+		sem_wait(&user_input_semaphore);
+		
+		printf("Enter command (f, s, p, r, c, sigma, rho, beta, reset): ");
+		j = scanf("%s", input_buffer);
+
+		if (strcmp(input_buffer, "f") == 0) {
+			delay_time = (delay_time < 2) ? delay_time : (delay_time >> 1);
+		} else if (strcmp(input_buffer, "s") == 0) {
+			delay_time = (delay_time > 5242888) ? delay_time : (delay_time << 1);
+		} else if (strcmp(input_buffer, "p") == 0) {
+			goFlag = PAUSE;
+		} else if (strcmp(input_buffer, "r") == 0) {
+			goFlag = RESUME;
+		} else if (strcmp(input_buffer, "c") == 0) {
+			VGA_box(0, 0, 639, 479, black);
+		} else if (strcmp(input_buffer, "sigma") == 0) {
+			printf("SIGMA: ");
+			j = scanf("%f", &value_buffer);
+			text_sigma = value_buffer;
+			*(sigma_pio_ptr) = float2fix(value_buffer);
+		} else if (strcmp(input_buffer, "rho") == 0) {
+			printf("RHO: ");
+			j = scanf("%f", &value_buffer);
+			text_rho = value_buffer;
+			*(rho_pio_ptr) = float2fix(value_buffer);
+		} else if (strcmp(input_buffer, "beta") == 0) {
+			printf("BETA: ");
+			j = scanf("%f", &value_buffer);
+			text_beta = value_buffer;
+			*(beta_pio_ptr) = float2fix(value_buffer);
+		} else if (strcmp(input_buffer, "reset") == 0) {
+			sem_post(&reset_semaphore);
+			sem_wait(&user_input_semaphore);
+		}
+		sem_post(&user_input_semaphore);
+	}
+}
+
+// Thread 3: integrator thread
+void * integrator_thread() {
+	while(1) {
+		if (goFlag == PAUSE) {
+			usleep(10000);  // Prevent tight looping
+			
+			char text_buffer[256]; 
+			sprintf(text_buffer, "X0: %f", text_x0);
+			VGA_text(20, 5, text_buffer);
+			sprintf(text_buffer, "Y0: %f", text_y0);
+			VGA_text(20, 6, text_buffer);
+			sprintf(text_buffer, "Z0: %f", text_z0);
+			VGA_text(20, 7, text_buffer);
+			sprintf(text_buffer, "SIGMA: %f", text_sigma);
+			VGA_text(20, 8, text_buffer);
+			sprintf(text_buffer, "RHO: %f", text_rho);
+			VGA_text(20, 9, text_buffer);
+			sprintf(text_buffer, "BETA: %f", text_beta);
+			VGA_text(20, 10, text_buffer);
+		}
+		if (goFlag == RESUME) {
+			// clock the integrators
+			*clock_pio_ptr = 1;
+			*clock_pio_ptr = 0;
+
+			usleep(delay_time);
+
+			// text that shows initial conditions and parameters
+			char text_buffer[256]; 
+			sprintf(text_buffer, "X0: %f", text_x0);
+			VGA_text(20, 5, text_buffer);
+			sprintf(text_buffer, "Y0: %f", text_y0);
+			VGA_text(20, 6, text_buffer);
+			sprintf(text_buffer, "Z0: %f", text_z0);
+			VGA_text(20, 7, text_buffer);
+			sprintf(text_buffer, "SIGMA: %f", text_sigma);
+			VGA_text(20, 8, text_buffer);
+			sprintf(text_buffer, "RHO: %f", text_rho);
+			VGA_text(20, 9, text_buffer);
+			sprintf(text_buffer, "BETA: %f", text_beta);
+			VGA_text(20, 10, text_buffer);
+
+			// draw to the screen
+			// for xz projection
+			VGA_line(horiz_prev_xz + XZ_ORIGIN_H,
+					 vert_prev_xz + XZ_ORIGIN_V,
+					(int)(-fix2float(*(horizontal_coord_xz))*scale_factor) + XZ_ORIGIN_H,
+					(int)(-fix2float(*(vertical_coord_xz))*scale_factor) + XZ_ORIGIN_V,
+					red);
+
+			// for yz projection
+			VGA_line(horiz_prev_yz + YZ_ORIGIN_H,
+					 vert_prev_yz + YZ_ORIGIN_V,
+					(int)(-fix2float(*(horizontal_coord_yz))*scale_factor) + YZ_ORIGIN_H,
+					(int)(-fix2float(*(vertical_coord_yz))*scale_factor) + YZ_ORIGIN_V,
+					green);
+
+			// for xy projection
+			VGA_line(horiz_prev_xy + XY_ORIGIN_H,
+					 vert_prev_xy + XY_ORIGIN_V,
+					(int)(-fix2float(*(horizontal_coord_xy))*scale_factor) + XY_ORIGIN_H,
+					(int)(-fix2float(*(vertical_coord_xy))*scale_factor) + XY_ORIGIN_V,
+					blue);
+
+			// store previous values
+			horiz_prev_xz = (int)(-fix2float(*(horizontal_coord_xz))*scale_factor);
+			vert_prev_xz = (int)(-fix2float(*(vertical_coord_xz))*scale_factor);
+			horiz_prev_yz = (int)(-fix2float(*(horizontal_coord_yz))*scale_factor);
+			vert_prev_yz = (int)(-fix2float(*(vertical_coord_yz))*scale_factor);
+			horiz_prev_xy = (int)(-fix2float(*(horizontal_coord_xy))*scale_factor);
+			vert_prev_xy = (int)(-fix2float(*(vertical_coord_xy))*scale_factor);
+		}
+	}
+}
+	
+int main(void)
+{
+	// Open /dev/mem
+	if((fd = open("/dev/mem", (O_RDWR | O_SYNC))) == -1) {
+		printf("ERROR: could not open \"/dev/mem\"...\n");
+		return(1);
+	}
+    
+	// get virtual addr that maps to physical
+	h2p_lw_virtual_base = mmap(NULL, HW_REGS_SPAN, (PROT_READ | PROT_WRITE), MAP_SHARED, fd, HW_REGS_BASE);	
+	if(h2p_lw_virtual_base == MAP_FAILED) {
+		printf("ERROR: mmap1() failed...\n");
+		close(fd);
+		return(1);
+	}
+
+	// store correct virtual memory to ptr
+	clock_pio_ptr = (unsigned int *)(h2p_lw_virtual_base + CLOCK_PIO);
+	reset_pio_ptr = (unsigned int *)(h2p_lw_virtual_base + RESET_PIO);
+	sigma_pio_ptr = (unsigned int *)(h2p_lw_virtual_base + SIGMA_PIO);
+	rho_pio_ptr = (unsigned int *)(h2p_lw_virtual_base + RHO_PIO);
+	beta_pio_ptr = (unsigned int *)(h2p_lw_virtual_base + BETA_PIO);
+	x0_pio_ptr = (int *)(h2p_lw_virtual_base + X0_PIO);
+	y0_pio_ptr = (int *)(h2p_lw_virtual_base + Y0_PIO);
+	z0_pio_ptr = (int *)(h2p_lw_virtual_base + Z0_PIO);
+	x_pio_read_ptr = (unsigned int *)(h2p_lw_virtual_base + X_PIO_READ);
+	y_pio_read_ptr = (unsigned int *)(h2p_lw_virtual_base + Y_PIO_READ);
+	z_pio_read_ptr = (unsigned int *)(h2p_lw_virtual_base + Z_PIO_READ);
+
+	// prevent horizontal_coord from being NULL when integrator_thread starts
+	vertical_coord_xz = x_pio_read_ptr;
+	horizontal_coord_xz = z_pio_read_ptr;
+	vertical_coord_yz = y_pio_read_ptr;
+	horizontal_coord_yz = z_pio_read_ptr;
+	vertical_coord_xy = x_pio_read_ptr;
+	horizontal_coord_xy = y_pio_read_ptr;
+
+	// get VGA char addr
+	vga_char_virtual_base = mmap(NULL, FPGA_CHAR_SPAN, (PROT_READ | PROT_WRITE), MAP_SHARED, fd, FPGA_CHAR_BASE);	
+	if(vga_char_virtual_base == MAP_FAILED) {
+		printf("ERROR: mmap2() failed...\n");
+		close(fd);
+		return(1);
+	}
+    
+	vga_char_ptr = (unsigned int *)(vga_char_virtual_base);
+
+	// get VGA pixel addr
+	vga_pixel_virtual_base = mmap(NULL, SDRAM_SPAN, (PROT_READ | PROT_WRITE), MAP_SHARED, fd, SDRAM_BASE);	
+	if(vga_pixel_virtual_base == MAP_FAILED) {
+		printf("ERROR: mmap3() failed...\n");
+		close(fd);
+		return(1);
+	}
+    
+	vga_pixel_ptr = (unsigned int *)(vga_pixel_virtual_base);
+
+	// Clear screen immediately to remove any leftover graphics
+	VGA_box(0, 0, 639, 479, black);
+	VGA_text_clear();
+
+	// the thread identifiers
+	pthread_t thread_reset_thread, thread_user_input_thread, thread_integrator_thread;
+
+	// the semaphore inits
+	sem_init(&reset_semaphore, 0, 0);
+	sem_init(&user_input_semaphore, 0, 1);
+
+	// thread attribute
+	pthread_attr_t attr;
+	pthread_attr_init(&attr);
+	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
+
+	// create the threads
+	pthread_create(&thread_reset_thread, NULL, reset_thread, NULL);
+	pthread_create(&thread_user_input_thread, NULL, user_input_thread, NULL);
+	pthread_create(&thread_integrator_thread, NULL, integrator_thread, NULL);
+
+	// start scheduler
+	pthread_join(thread_reset_thread, NULL);
+	pthread_join(thread_user_input_thread, NULL);
+	pthread_join(thread_integrator_thread, NULL);
+	
+	return 0;
+}
+
+void VGA_text(int x, int y, char * text_ptr)
+{
+	volatile char * character_buffer = (char *) vga_char_ptr;
+	int offset;
+	offset = (y << 7) + x;
+	while (*(text_ptr))
+	{
+		*(character_buffer + offset) = *(text_ptr);	
+		++text_ptr;
+		++offset;
+	}
+}
+
+void VGA_text_clear()
+{
+	volatile char * character_buffer = (char *) vga_char_ptr;
+	int offset, x, y;
+	for (x = 0; x < 79; x++) {
+		for (y = 0; y < 59; y++) {
+			offset = (y << 7) + x;
+			*(character_buffer + offset) = ' ';		
+		}
+	}
+}
+
+#define SWAP(X,Y) do{int temp=X; X=Y; Y=temp;}while(0) 
+
+void VGA_box(int x1, int y1, int x2, int y2, short pixel_color)
+{
+	int row, col;
+
+	if (x1 > 639) x1 = 639;
+	if (y1 > 479) y1 = 479;
+	if (x2 > 639) x2 = 639;
+	if (y2 > 479) y2 = 479;
+	if (x1 < 0) x1 = 0;
+	if (y1 < 0) y1 = 0;
+	if (x2 < 0) x2 = 0;
+	if (y2 < 0) y2 = 0;
+	if (x1 > x2) SWAP(x1, x2);
+	if (y1 > y2) SWAP(y1, y2);
+	
+	for (row = y1; row <= y2; row++)
+		for (col = x1; col <= x2; ++col)
+		{
+			VGA_PIXEL(col, row, pixel_color);	
+		}
+}
+
+void VGA_line(int x1, int y1, int x2, int y2, short c) {
+	int e;
+	signed int dx, dy, j, temp;
+	signed int s1, s2, xchange;
+	signed int x, y;
+	
+	if (x1 > 639) x1 = 639;
+	if (y1 > 479) y1 = 479;
+	if (x2 > 639) x2 = 639;
+	if (y2 > 479) y2 = 479;
+	if (x1 < 0) x1 = 0;
+	if (y1 < 0) y1 = 0;
+	if (x2 < 0) x2 = 0;
+	if (y2 < 0) y2 = 0;
+        
+	x = x1;
+	y = y1;
+	
+	if (x2 < x1) {
+		dx = x1 - x2;
+		s1 = -1;
+	}
+	else if (x2 == x1) {
+		dx = 0;
+		s1 = 0;
+	}
+	else {
+		dx = x2 - x1;
+		s1 = 1;
+	}
+
+	if (y2 < y1) {
+		dy = y1 - y2;
+		s2 = -1;
+	}
+	else if (y2 == y1) {
+		dy = 0;
+		s2 = 0;
+	}
+	else {
+		dy = y2 - y1;
+		s2 = 1;
+	}
+
+	xchange = 0;   
+
+	if (dy > dx) {
+		temp = dx;
+		dx = dy;
+		dy = temp;
+		xchange = 1;
+	} 
+
+	e = ((int)dy << 1) - dx;  
+	 
+	for (j = 0; j <= dx; j++) {
+		VGA_PIXEL(x, y, c);			
+		 
+		if (e >= 0) {
+			if (xchange == 1) x = x + s1;
+			else y = y + s2;
+			e = e - ((int)dx << 1);
+		}
+
+		if (xchange == 1) y = y + s2;
+		else x = x + s1;
+
+		e = e + ((int)dy << 1);
+	}
+}

@@ -11,95 +11,17 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/types.h>
+#include <stdint.h>
 #include <sys/ipc.h> 
 #include <sys/shm.h> 
 #include <sys/mman.h>
 #include <sys/time.h> 
 #include <math.h>
+#include <string.h>
 //#include "address_map_arm_brl4.h"
 
-
-// lab 1 week 3 (additional libraries) --> add "-lpthread" to "gcc graphics..."
-#include <pthread.h>
-#include <semaphore.h>
-
-// lab 1 week 3 (fix2float conversions)
-#define int2fix(a)	(((int)(a)) << 20)
-#define fix2int(a)	((signed char)((a) >> 20))
-#define float2fix(a) (int)(a*1048576) // 2^20 = 1048576
-#define	fix2float(a)  (((float)(a))/1048576.0)
-
-
-// lab 1 week 3 (macros)
-// default initial conditions
-#define DEFAULT_X0				-1.0
-#define DEFAULT_Y0				0.1
-#define DEFAULT_Z0				25.0
-// default parameters
-#define DEFAULT_SIGMA			10.0
-#define DEFAULT_RHO				28.0
-#define DEFAULT_BETA            2.6666666 // 8/3
-// define three projection's plot origin on 640x480 pixel VGA screen
-#define XZ_ORIGIN_H				250
-#define XZ_ORIGIN_V				120
-#define YZ_ORIGIN_H				550
-#define YZ_ORIGIN_V				120
-#define XY_ORIGIN_H				320
-#define XY_ORIGIN_V				330
-// define where initial condition and parameter text should start writing on 640x480 pixel VGA screen
-// let's do 5 pixel vertical distance between each line --> REMINDER TO MYSELF
-#define INITIAL_PARAM_TEXT_START_H				20
-#define INITIAL_PARAM_TEXT_START_V				360
-// for go flag
-#define PAUSE				0
-#define RESUME				1
-
-
-
-// lab 1 week 3 (global variables, modified in code)
-// for plotting along horizontal and vertical direction of the three 2D projections (XZ, YZ, XY)
-volatile signed int *horizontal_coord_xz = NULL ; // can probably just use the xyz pio read pointers
-volatile signed int *vertical_coord_xz = NULL ;
-volatile signed int *horizontal_coord_yz = NULL ;
-volatile signed int *vertical_coord_yz = NULL ;
-volatile signed int *horizontal_coord_xy = NULL ;
-volatile signed int *vertical_coord_xy = NULL ;
-// xyz output values from FPGA to ARM are fix-point --> fix2float --> some values very small (e.g 0.6, 0.1, 0.045) --> scale by some factor to be visible on 640x480 pixel VGA screen
-float scale_factor = 3.0;
-// control pace of drawing (stall for a bit after each clock pulse in integrator_thread)
-unsigned int delay_time = 1000;
-// if 1 --> integrator resumes, if 0 --> integrator pauses (ARM stop sending clock pulses to FPGA's integrator)
-int goFlag = PAUSE;
-// character array (max 63 character, one null terminator), accept keyboard inputs
-char input_buffer[64];
-// accept floating point value
-float value_buffer;
-// return value from scanf --> make sure successfully read all user input  
-int j;
-// for VGA_line, to draw a line from previous position (horiz_prev) to current position (horizontal_coord)
-int signed horiz_prev_xz;
-int signed vert_prev_xz;
-int signed horiz_prev_yz;
-int signed vert_prev_yz;
-int signed horiz_prev_xy;
-int signed vert_prev_xy;
-// variables to be display later on vga text
-float text_x0 = DEFAULT_X0;
-float text_y0 = DEFAULT_Y0;
-float text_z0 = DEFAULT_Z0;
-float text_sigma = DEFAULT_SIGMA;
-float text_rho = DEFAULT_RHO;
-float text_beta = DEFAULT_BETA;
-
-
-// lab 1 week 3 (global objects of type relative to pthreads --> mutex objects, semaphores)
-// access to text buffer
-pthread_mutex_t input_buffer_lock= PTHREAD_MUTEX_INITIALIZER;
-// semaphores
-sem_t reset_semaphore, user_input_semaphore ; // tell user_input_thread that reset (and initial condition, parameters) is set, ready for user input
-
 // video display
-#define SDRAM_BASE            0xC0000000 // hardware base address of axi bus
+#define SDRAM_BASE            0xC0000000
 #define SDRAM_END             0xC3FFFFFF
 #define SDRAM_SPAN			  0x04000000
 // characters
@@ -107,37 +29,35 @@ sem_t reset_semaphore, user_input_semaphore ; // tell user_input_thread that res
 #define FPGA_CHAR_END         0xC9001FFF
 #define FPGA_CHAR_SPAN        0x00002000
 /* Cyclone V FPGA devices */
-#define HW_REGS_BASE          0xff200000 // hardware base address of lw axi bus
+#define HW_REGS_BASE          0xff200000
 //#define HW_REGS_SPAN        0x00200000 
 #define HW_REGS_SPAN          0x00005000 
 
-// lab 1 week 3 (pio base address)
-// lw axi bus marcos for pio offset 
-#define CLOCK_PIO 			  0x10
-#define RESET_PIO 			  0x20
-#define SIGMA_PIO 			  0x30
-#define RHO_PIO 			  0x40
-#define BETA_PIO 			  0x50
-#define X0_PIO 			      0x60
-#define Y0_PIO 			      0x70
-#define Z0_PIO 			      0x80
-#define X_PIO_READ 			  0x90 // offsets
-#define Y_PIO_READ 			  0x100
-#define Z_PIO_READ 			  0x110
 
+#define PIO_RESET_OFFSET	  		0x00000000
+#define PIO_COMPUTE_OFFSET    		0x00000010
+#define PIO_DONE_OFFSET		  		0x00000020
+#define PIO_FULL_RESET_OFFSET 		0x00000030
+#define PIO_IMAGE_NORM_OFFSET		0x00000040
+#define PIO_X_SHIFT_OFFSET			0x00000050
+#define PIO_Y_SHIFT_OFFSET			0x00000060
+#define PIO_UPDATE_DISPLAY_OFFSET	0x00000070
+
+#define SDRAM_INPUT_SIZE      		0x00012C00
+#define SDRAM_ACCUMULATOR_SIZE  	0x000E1000
+#define SDRAM_DISPLAY_SIZE    		0x0004B000
+
+#define SDRAM_DISPLAY_OFFSET  		0x00000000
+#define SDRAM_ACCUMULATOR_OFFSET 	SDRAM_DISPLAY_OFFSET + SDRAM_DISPLAY_SIZE
+#define SDRAM_INPUT_OFFSET			SDRAM_ACCUMULATOR_OFFSET + SDRAM_ACCUMULATOR_SIZE
+
+#define DEFAULT_FOLDER "input_raw24_img"
 
 // graphics primitives
 void VGA_text (int, int, char *);
 void VGA_text_clear();
-void VGA_box (int, int, int, int, short);
-void VGA_rect (int, int, int, int, short);
-void VGA_line(int, int, int, int, short) ;
-void VGA_Vline(int, int, int, short) ;
-void VGA_Hline(int, int, int, short) ;
-void VGA_disc (int, int, int, short);
 void VGA_circle (int, int, int, int);
-// 16-bit primary colors 
-// 16 bit RGB color value computed according to consecutive addressing (5 bit R, 6 bit G, 5 bit B --> 16 bit RGB color space according to Altera video IP cores)
+// 16-bit primary colors
 #define red  (0+(0<<5)+(31<<11))
 #define dark_red (0+(0<<5)+(15<<11))
 #define green (0+(63<<5)+(0<<11))
@@ -153,30 +73,24 @@ void VGA_circle (int, int, int, int);
 int colors[] = {red, dark_red, green, dark_green, blue, dark_blue, 
 		yellow, cyan, magenta, gray, black, white};
 
-// pixel macro --> draw pixel routine that associate pixel w/ address according to consecutive addressing mode
+// pixel macro
 #define VGA_PIXEL(x,y,color) do{\
 	int  *pixel_ptr ;\
-	pixel_ptr = (int*)((char *)vga_pixel_ptr + (((y)*640+(x))<<1));\
-	*(short *)pixel_ptr = (color);\
+	pixel_ptr = (int*)((char *)vga_pixel_ptr + (((y)*640+(x))<<1)) ; \
+	*(uint32_t *)pixel_ptr = (color);\
 } while(0)
+
+#define FILE_TO_DISPLAY_COLOR(color) \
+(((color & 0x000000FF) << 16) + (color & 0x0000FF00) + ((color & 0x00FF0000) >> 16))
+
+int load_img(const char *filename, uint32_t *out_addr, int width, int height);
+void compute_com(uint32_t *color_in, int width, int height, uint32_t *x_shift_out, uint32_t *y_shift_out);
+int count_frames(const char *pattern);
+void overlay_original(const char *filename, uint32_t *display_buf, int ox, int oy, int width, int height);
+void run_drizzle(const char *folder, uint32_t *pixel_input_buffer);
 
 // the light weight buss base
 void *h2p_lw_virtual_base;
-
-// lab 1 week 3 (pio pointers)
-// axi bus pio pointer
-volatile signed int * x_pio_read_ptr = NULL ; // signed int, i should use 32 bit fix pt?
-volatile signed int * y_pio_read_ptr = NULL ;
-volatile signed int * z_pio_read_ptr = NULL ;
-// lw axi bus pio pointer
-volatile unsigned int * clock_pio_ptr = NULL ;
-volatile unsigned int * reset_pio_ptr = NULL ;
-volatile unsigned int * sigma_pio_ptr = NULL ; // from wikipedia, one normally assumes the parameters sigma, rho, beta positive
-volatile unsigned int * rho_pio_ptr = NULL ;
-volatile unsigned int * beta_pio_ptr = NULL ;
-volatile signed int * x0_pio_ptr = NULL ; // signed int
-volatile signed int * y0_pio_ptr = NULL ;
-volatile signed int * z0_pio_ptr = NULL ;
 
 // pixel buffer
 volatile unsigned int * vga_pixel_ptr = NULL ;
@@ -186,6 +100,15 @@ void *vga_pixel_virtual_base;
 volatile unsigned int * vga_char_ptr = NULL ;
 void *vga_char_virtual_base;
 
+volatile uint32_t *pio_reset 			= NULL;
+volatile uint32_t *pio_compute 			= NULL;
+volatile uint32_t *pio_done 			= NULL;
+volatile uint32_t *pio_full_reset 		= NULL;
+volatile uint32_t *pio_image_norm 		= NULL;
+volatile uint32_t *pio_x_shift 			= NULL;
+volatile uint32_t *pio_y_shift 			= NULL;
+volatile uint32_t *pio_update_display	= NULL;
+
 // /dev/mem file id
 int fd;
 
@@ -193,242 +116,12 @@ int fd;
 struct timeval t1, t2;
 double elapsedTime;
 
-// lab 1 week 3 (pthreads)
-// Thread 1: reset thread
-void * reset_thread() {
-	while(1) {
-		// waiting to be signaled by user_input_thread (user type in "reset" to command line interface)
-		sem_wait(&reset_semaphore) ;
-		
-		// clear the text ??? hmmmmm
-		VGA_text_clear();
-
-		// stop the animation (plotting pause)
-		goFlag = PAUSE;
-
-		// use default values?
-		// default x0, y0, z0, sigma, rho, beta
-		printf("Default values? (y/n):") ;
-		j = scanf("%s", input_buffer) ; // read a string from command line interface and store in input buffer --> j is 1 if user input something, 0 if nothing is read
-		
-
-		if (strcmp(input_buffer, "y")==0) { // if y to default value
-			// set default initial conditions and parameters
-			// send to FPGA through PIOs
-			*(x0_pio_ptr) = float2fix(DEFAULT_X0); 
-			*(y0_pio_ptr) = float2fix(DEFAULT_Y0);
-			*(z0_pio_ptr) = float2fix(DEFAULT_Z0);
-			*(sigma_pio_ptr) = float2fix(DEFAULT_SIGMA);
-			*(rho_pio_ptr) = float2fix(DEFAULT_RHO);
-			*(beta_pio_ptr) = float2fix(DEFAULT_BETA);
-
-			text_x0 = DEFAULT_X0;
-			text_y0 = DEFAULT_Y0;
-			text_z0 = DEFAULT_Z0;
-			text_sigma = DEFAULT_SIGMA;
-			text_rho = DEFAULT_RHO;
-			text_beta = DEFAULT_BETA;
-
-		} else if (strcmp(input_buffer, "n")==0) { // if n to default value
-			// ask user for new initial condition values and new parameters, then set new initial condition and new parameter
-			printf("Input new initial conditions and parameters in floating point.\n") ;
-			printf("X0: ") ;
-			j = scanf("%f", &value_buffer) ;
-			text_x0 = value_buffer ; // store value to initial condition variable to be display later on vga text
-			*(x0_pio_ptr) = float2fix(value_buffer);// set initial condition --> send to FPGA through PIOs
-			printf("Y0: ") ;
-			j = scanf("%f", &value_buffer) ;
-			text_y0 = value_buffer ;
-			*(y0_pio_ptr) = float2fix(value_buffer);
-			printf("Z0: ") ;
-			j = scanf("%f", &value_buffer) ;
-			text_z0 = value_buffer ;
-			*(z0_pio_ptr) = float2fix(value_buffer);
-			printf("SIGMA: ") ;
-			j = scanf("%f", &value_buffer) ;
-			text_sigma = value_buffer ;
-			*(sigma_pio_ptr) = float2fix(value_buffer);
-			printf("RHO: ") ;
-			j = scanf("%f", &value_buffer) ;
-			text_rho = value_buffer ;
-			*(rho_pio_ptr) = float2fix(value_buffer);
-			printf("BETA: ") ;
-			j = scanf("%f", &value_buffer) ;
-			text_beta = value_buffer ;
-			*(beta_pio_ptr) = float2fix(value_buffer);
-		} 
-
-		// consecutive addressing mode --> use VGA_LINE to plot!
-		// for xz projection?
-		vertical_coord_xz = x_pio_read_ptr ;
-		horizontal_coord_xz = z_pio_read_ptr ;
-		// for yz projection?
-		vertical_coord_yz = y_pio_read_ptr ;
-		horizontal_coord_yz = z_pio_read_ptr ;
-		// for xy projection? (might be upside down unless make it negative)
-		vertical_coord_xy = x_pio_read_ptr ;
-		horizontal_coord_xy = y_pio_read_ptr ;
-		
-		// reset the FPGA state machine
-		*clock_pio_ptr = 0;
-		*reset_pio_ptr = 0;
-		*reset_pio_ptr = 1; // have not yet reset the integrator because have not yet provide a positive edge of the clock
-		*clock_pio_ptr = 1; // but now with reset high, toggle the clock high to 1 (positive edge of the clock with the reset input high) --> satisfies the reset condition and resets the integrator
-		// now put clock and reset back to low
-		*clock_pio_ptr = 0;
-		*reset_pio_ptr = 1; 
-		
-		// everytime the c program toggles the clock 1 to 0, step the integrator by one step
-		// clock the integrators
-		*clock_pio_ptr = 1;
-		*clock_pio_ptr = 0;
-
-		// initialize the previous states 
-		horiz_prev_xz = (int)(-fix2float(*(horizontal_coord_xz))*scale_factor) ; 
-		vert_prev_xz = (int)(-fix2float(*(vertical_coord_xz))*scale_factor) ;
-		horiz_prev_yz = (int)(-fix2float(*(horizontal_coord_yz))*scale_factor) ;
-		vert_prev_yz = (int)(-fix2float(*(vertical_coord_yz))*scale_factor) ;
-		horiz_prev_xy = (int)(-fix2float(*(horizontal_coord_xy))*scale_factor) ;
-		vert_prev_xy = (int)(-fix2float(*(vertical_coord_xy))*scale_factor) ;
-
-		// clear screen
-		VGA_box(0, 0, 639, 479, black);
-
-		// start the animation
-		goFlag = RESUME ;
-
-		// start the user input thread
-		sem_post(&user_input_semaphore);
-
-	} // end while(1)
-}
-
-// Thread 2: user input thread (command line interface)
-void * user_input_thread() {
-	while(1) {
-		// wait for reset_thread to be done
-		sem_wait(&user_input_semaphore) ;
-		
-		// command line interface
-		printf("Enter command (f, s, p, r, c, sigma, rho, beta, reset): ") ;
-		j = scanf("%s", input_buffer) ;
-
-		// strcmp --> string compare, if input_buffer's string value identical to "s", output 0
-		if (strcmp(input_buffer, "f")==0) { // speed up plotting
-			delay_time = (delay_time<2)?delay_time:(delay_time>>1); // delay_time / 2
-		} else if (strcmp(input_buffer, "s")==0) { // slow down plotting
-			delay_time = (delay_time>5242888)?delay_time:(delay_time<<1) ; // delay_time * 2
-		} else if (strcmp(input_buffer, "p")==0) { // pause plotting
-			goFlag = PAUSE;
-		} else if (strcmp(input_buffer, "r")==0) { // resume plotting
-			goFlag = RESUME;
-		} else if (strcmp(input_buffer, "c")==0) { // clear screen
-			VGA_box(0, 0, 639, 479, black);
-		} else if (strcmp(input_buffer, "sigma")==0) { // change sigma
-			printf("SIGMA: ") ;
-			j = scanf("%f", &value_buffer) ;
-			text_sigma = value_buffer ;
-			*(sigma_pio_ptr) = float2fix(value_buffer);
-		} else if (strcmp(input_buffer, "rho")==0) { // change rho
-			printf("RHO: ") ;
-			j = scanf("%f", &value_buffer) ;
-			text_rho = value_buffer ;
-			*(rho_pio_ptr) = float2fix(value_buffer);
-		} else if (strcmp(input_buffer, "beta")==0) { // change beta
-			printf("BETA: ") ;
-			j = scanf("%f", &value_buffer) ;
-			text_beta = value_buffer ;
-			*(beta_pio_ptr) = float2fix(value_buffer);
-		} else if (strcmp(input_buffer, "reset")==0) { // reset
-			sem_post(&reset_semaphore) ;
-			sem_wait(&user_input_semaphore) ;
-		}
-		sem_post(&user_input_semaphore) ;
-	} // end while(1)
-}
-
-// Thread 3: integrator thread
-// integrator_thread always run in background (check if goFlag is 0 or 1), synchronize w/ user_input_thread (resume or pause plotting) by goFlag
-// actually do plotting and write text (but only if goFlag RESUME, 1)
-void * integrator_thread() {
-	while(1) {
-		// if (goFlag == PAUSE) {
-		// 	// no clock pulses send to integrator, always animate same image
-		// 	printf("paused!\n");
-
-		// }
-		if (goFlag == RESUME) {
-
-			// clock the integrators
-			*clock_pio_ptr = 1; // positive edge of clock, xyz reg assume the value of xyznew
-			*clock_pio_ptr = 0;
-
-			// slow down drawing --> control pace of plotting
-			usleep(delay_time) ;
-
-			// text that shows initial conditions and parameters
-			char text_buffer[256]; 
-			sprintf(text_buffer, "X0: %f", text_x0);
-			VGA_text (5, 53, text_buffer);
-			sprintf(text_buffer, "Y0: %f", text_y0);
-			VGA_text (5, 54, text_buffer);
-			sprintf(text_buffer, "Z0: %f", text_z0);
-			VGA_text (5, 55, text_buffer);
-			sprintf(text_buffer, "SIGMA: %f", text_sigma);
-			VGA_text (5, 56, text_buffer);
-			sprintf(text_buffer, "RHO: %f", text_rho);
-			VGA_text (5, 57, text_buffer);
-			sprintf(text_buffer, "BETA: %f", text_beta);
-			VGA_text (5, 58, text_buffer);
-			// text that shows xyz projection label
-			VGA_text (12, 27, "XZ Projection");
-			VGA_text (50, 27, "YZ Projection");
-			VGA_text (35, 52, "XY Projection");
-
-			//draw to the screen
-			//VGA_line(int x1, int y1, int x2, int y2, short c)
-			//draws a line segment between previous position (x1, y1) and current position (x2, y2)
-
-			// for xz projection
-			VGA_line(horiz_prev_xz + XZ_ORIGIN_H,
-					 vert_prev_xz + XZ_ORIGIN_V,
-					(int)(-fix2float(*(horizontal_coord_xz))*scale_factor) + XZ_ORIGIN_H,
-					(int)(-fix2float(*(vertical_coord_xz))*scale_factor) + XZ_ORIGIN_V,
-					red) ;
-
-			// for yz projection
-			VGA_line(horiz_prev_yz + YZ_ORIGIN_H,
-					 vert_prev_yz + YZ_ORIGIN_V,
-					(int)(-fix2float(*(horizontal_coord_yz))*scale_factor) + YZ_ORIGIN_H,
-					(int)(-fix2float(*(vertical_coord_yz))*scale_factor) + YZ_ORIGIN_V,
-					green) ;
-
-			// for xy projection
-			VGA_line(horiz_prev_xy + XY_ORIGIN_H,
-					 vert_prev_xy + XY_ORIGIN_V,
-					(int)(-fix2float(*(horizontal_coord_xy))*scale_factor) + XY_ORIGIN_H,
-					(int)(-fix2float(*(vertical_coord_xy))*scale_factor) + XY_ORIGIN_V,
-					blue) ;
-
-			// store previous value
-
-			// for xz projection
-			horiz_prev_xz = (int)(-fix2float(*(horizontal_coord_xz))*scale_factor) ;
-			vert_prev_xz = (int)(-fix2float(*(vertical_coord_xz))*scale_factor) ;
-			// for yz projection
-			horiz_prev_yz = (int)(-fix2float(*(horizontal_coord_yz))*scale_factor) ;
-			vert_prev_yz = (int)(-fix2float(*(vertical_coord_yz))*scale_factor) ;
-			// for xy projection
-			horiz_prev_xy = (int)(-fix2float(*(horizontal_coord_xy))*scale_factor) ;
-			vert_prev_xy = (int)(-fix2float(*(vertical_coord_xy))*scale_factor) ;
-		}
-	} // end while(1)
-}
+// command line input buffer
+char input_buffer[128];
+int j;
 	
-int main(void)
+int main(int argc, char *argv[])
 {
-	
-  	
 	// === need to mmap: =======================
 	// FPGA_CHAR_BASE
 	// FPGA_ONCHIP_BASE      
@@ -449,32 +142,6 @@ int main(void)
 		return(1);
 	}
 
-	// lab 1 week 3 (store correct virtual memory to ptr)
-	clock_pio_ptr = (unsigned int *)(h2p_lw_virtual_base + CLOCK_PIO);
-	reset_pio_ptr = (unsigned int *)(h2p_lw_virtual_base + RESET_PIO);
-	sigma_pio_ptr = (unsigned int *)(h2p_lw_virtual_base + SIGMA_PIO);
-	rho_pio_ptr = (unsigned int *)(h2p_lw_virtual_base + RHO_PIO);
-	beta_pio_ptr = (unsigned int *)(h2p_lw_virtual_base + BETA_PIO);
-	x0_pio_ptr = (int *)(h2p_lw_virtual_base + X0_PIO);
-	y0_pio_ptr = (int *)(h2p_lw_virtual_base + Y0_PIO);
-	z0_pio_ptr = (int *)(h2p_lw_virtual_base + Z0_PIO);
-	x_pio_read_ptr =(unsigned int *)(h2p_lw_virtual_base + X_PIO_READ);
-	y_pio_read_ptr =(unsigned int *)(h2p_lw_virtual_base + Y_PIO_READ);
-	z_pio_read_ptr =(unsigned int *)(h2p_lw_virtual_base + Z_PIO_READ);
-
-	// to prevent horizontal_coord to be NULL when integrator_thread starts immediately and goFlag = PAUSE
-	//HEREEEE
-	// for xz projection?
-	vertical_coord_xz = x_pio_read_ptr ;
-	horizontal_coord_xz = z_pio_read_ptr ;
-	// for yz projection?
-	vertical_coord_yz = y_pio_read_ptr ;
-	horizontal_coord_yz = z_pio_read_ptr ;
-	// for xy projection? (might be upside down unless make it negative)
-	vertical_coord_xy = x_pio_read_ptr ;
-	horizontal_coord_xy = y_pio_read_ptr ;
-
-
 	// === get VGA char addr =====================
 	// get virtual addr that maps to physical
 	vga_char_virtual_base = mmap( NULL, FPGA_CHAR_SPAN, ( 	PROT_READ | PROT_WRITE ), MAP_SHARED, fd, FPGA_CHAR_BASE );	
@@ -487,7 +154,6 @@ int main(void)
     // Get the address that maps to the FPGA LED control 
 	vga_char_ptr =(unsigned int *)(vga_char_virtual_base);
 
-
 	// === get VGA pixel addr ====================
 	// get virtual addr that maps to physical
 	vga_pixel_virtual_base = mmap( NULL, SDRAM_SPAN, ( PROT_READ | PROT_WRITE ), MAP_SHARED, fd, SDRAM_BASE);	
@@ -498,41 +164,290 @@ int main(void)
 	}
     
     // Get the address that maps to the FPGA pixel buffer
-	vga_pixel_ptr =(unsigned int *)(vga_pixel_virtual_base);
+	vga_pixel_ptr =(uint32_t *)(vga_pixel_virtual_base);
 	
-	// R bits 11-15 mask 0xf800
-	// G bits 5-10  mask 0x07e0
-	// B bits 0-4   mask 0x001f
-	// so color = B+(G<<5)+(R<<11);
+	pio_reset 			= (volatile int32_t *)((char *)h2p_lw_virtual_base + (PIO_RESET_OFFSET));
+	pio_compute 		= (volatile int32_t *)((char *)h2p_lw_virtual_base + (PIO_COMPUTE_OFFSET));
+	pio_done 			= (volatile int32_t *)((char *)h2p_lw_virtual_base + (PIO_DONE_OFFSET));
+	pio_full_reset 		= (volatile int32_t *)((char *)h2p_lw_virtual_base + (PIO_FULL_RESET_OFFSET));
+	pio_image_norm 		= (volatile int32_t *)((char *)h2p_lw_virtual_base + (PIO_IMAGE_NORM_OFFSET));
+	pio_x_shift 		= (volatile int32_t *)((char *)h2p_lw_virtual_base + (PIO_X_SHIFT_OFFSET));
+	pio_y_shift 		= (volatile int32_t *)((char *)h2p_lw_virtual_base + (PIO_Y_SHIFT_OFFSET));
+	pio_update_display 	= (volatile int32_t *)((char *)h2p_lw_virtual_base + (PIO_UPDATE_DISPLAY_OFFSET));
+	// ===========================================
 
-	// lab 1 week 3 (declare objects of type pthread_t and initialize semaphores)
+	// read raw 32-bit pixels into the VGA pixel buffer
+	uint32_t *pixel_input_buffer = (uint32_t *)(vga_pixel_virtual_base) + (SDRAM_INPUT_OFFSET);
 
-	// the thread identifiers
-	pthread_t thread_reset_thread, thread_user_input_thread, thread_integrator_thread;
+	int i;
 
-	// the semaphore inits
-	// reset_semaphore is not ready because nothing has been input yet
-	sem_init(&reset_semaphore, 0, 0); // 3rd argument is initial condition
-	// user_input_semaphore is ready to take user input at init time
-	sem_init(&user_input_semaphore, 0, 1);
+	for (i = 0; i < SDRAM_INPUT_SIZE + SDRAM_ACCUMULATOR_SIZE + SDRAM_DISPLAY_SIZE; i++)
+	{
+		((uint32_t *)vga_pixel_virtual_base)[i] = 0x00000000;
+	}
 
-	// for portability, explicitly create threads in a joinable state (system runs until thread returns, but none returns)
-	// thread attribute used here to allow JOIN
-	pthread_attr_t attr;
-	pthread_attr_init(&attr);
-	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
-
-	//create the threads --> associate pthread functions created above w/ pthread objects created in main
-	pthread_create(&thread_reset_thread,NULL,reset_thread,NULL);
-	pthread_create(&thread_user_input_thread,NULL,user_input_thread,NULL);
-	pthread_create(&thread_integrator_thread,NULL,integrator_thread,NULL);
-
-	// start scheduler, start scheduling these threads, keep scheduling until thread joins (never will)
-	pthread_join(thread_reset_thread, NULL);
-	pthread_join(thread_user_input_thread, NULL);
-	pthread_join(thread_integrator_thread, NULL);
+	// command line photo folder selection --> chooses which blurry set of images to drizzle
+	// default input_raw24_img
+	while (1) {
+		printf("Enter command:\n");
+		printf("s --> select folder and start drizzle\n");
+		printf("d --> select default folder (%s) and start drizzle\n", DEFAULT_FOLDER);
+		printf("c --> clear VGA screen\n");
+		printf("q --> quit\n");
+		fflush(stdout);
+		j = scanf("%s", input_buffer);
+		if (j != 1) continue;
+		if (strcmp(input_buffer, "s") == 0) {
+			printf("Enter folder name: ");
+			fflush(stdout);
+			j = scanf("%s", input_buffer);
+			if (j != 1) {
+				printf("ERROR: failed to read folder name\n");
+				continue;
+			}
+			char pattern[256];
+			sprintf(pattern, "%s/image_%%03d.bin", input_buffer);
+			int nframes = count_frames(pattern);
+			if (nframes == 0) {
+				printf("ERROR: no frames found in '%s'\n", input_buffer);
+				printf("  Expected: %s/image_001.bin, %s/image_002.bin, ...\n", input_buffer, input_buffer);
+				continue;
+			}
+			printf("Found %d frames in '%s'\n", nframes, input_buffer);
+			run_drizzle(input_buffer, pixel_input_buffer);
+ 
+		} else if (strcmp(input_buffer, "d") == 0) {
+			char pattern[256];
+			sprintf(pattern, "%s/image_%%03d.bin", DEFAULT_FOLDER);
+			int nframes = count_frames(pattern);
+			if (nframes == 0) {
+				printf("ERROR: no frames found in '%s'\n", DEFAULT_FOLDER);
+				continue;
+			}
+			printf("Found %d frames in '%s'\n", nframes, DEFAULT_FOLDER);
+			run_drizzle(DEFAULT_FOLDER, pixel_input_buffer);
+		} else if (strcmp(input_buffer, "c") == 0) {
+			printf("Clearing VGA screen...\n");
+			for (i = 0; i < 640 * 480; i++) {
+				((uint32_t *)vga_pixel_virtual_base)[i] = 0x00000000;
+			}
+			VGA_text_clear();
+			printf("Screen cleared.\n");
+		} else if (strcmp(input_buffer, "q") == 0) {
+			printf("Exiting.\n");
+			break;
+		} else {
+			printf("Unknown command: '%s'\n", input_buffer);
+		}
+	}
+	close(fd);
 	return 0;
 } // end main
+
+void run_drizzle(const char *folder, uint32_t *pixel_input_buffer) {
+	char filename[256];
+	char pattern[256];
+	sprintf(pattern, "%s/image_%%03d.bin", folder);
+ 
+	int total_frames = count_frames(pattern);
+	if (total_frames == 0) {
+		printf("ERROR: no frames to process\n");
+		return;
+	}
+ 
+	// Clear all SDRAM regions
+	int i;
+	for (i = 0; i < SDRAM_INPUT_SIZE + SDRAM_ACCUMULATOR_SIZE + SDRAM_DISPLAY_SIZE; i++) {
+		((uint32_t *)vga_pixel_virtual_base)[i] = 0x00000000;
+	}
+	VGA_text_clear();
+ 
+	*pio_x_shift = 0;
+	*pio_y_shift = 0;
+ 
+	int img_num;
+	int image_count = 0;
+ 
+	printf("\nProcessing %d frames from '%s'...\n\n", total_frames, folder);
+ 
+	struct timeval t_start, t_end;
+	gettimeofday(&t_start, NULL);
+ 
+	for (img_num = 1; img_num <= total_frames; img_num++) {
+		gettimeofday(&t1, NULL);
+		
+		sprintf(filename, pattern, img_num);
+		load_img(filename, pixel_input_buffer, 320, 240);
+ 
+		// Compute COM on HPS
+		int32_t x_shift, y_shift, x_com, y_com;
+		compute_com(pixel_input_buffer, 320, 240, &x_com, &y_com);
+ 
+		x_shift = (160 << 16) - x_com;
+		y_shift = (120 << 16) - y_com;
+ 
+		*pio_x_shift = x_shift;
+		*pio_y_shift = y_shift;
+ 
+		if (img_num == total_frames)
+			*pio_update_display = 1;
+		else
+			*pio_update_display = 0;
+ 
+		image_count = image_count + 1;
+ 
+		*pio_compute = 1;
+		*pio_image_norm = (1 << 16) / image_count;
+		*pio_reset = 1;
+ 
+		while (*pio_done) {}
+		*pio_reset = 0;
+		while (!(*pio_done)) {}
+ 
+		gettimeofday(&t2, NULL);
+		elapsedTime = (t2.tv_sec - t1.tv_sec) * 1000000.0;
+		elapsedTime += (t2.tv_usec - t1.tv_usec);
+ 
+		printf("  Frame %3d/%d  (%.0f us)\n", img_num, total_frames, elapsedTime);
+	}
+ 
+	gettimeofday(&t_end, NULL);
+	double total_ms = (t_end.tv_sec - t_start.tv_sec) * 1000.0;
+	total_ms += (t_end.tv_usec - t_start.tv_usec) / 1000.0;
+ 
+	printf("\nDrizzle complete! %d frames in %.1f ms (%.1f ms/frame)\n", 
+		total_frames, total_ms, total_ms / total_frames);
+ 
+	// original image show on top left of screen
+	printf("Overlay original frame 1 for comparison\n");
+ 
+	sprintf(filename, pattern, 1);
+	uint32_t *display_buf = (uint32_t *)vga_pixel_virtual_base;
+	overlay_original(filename, display_buf, 0, 0, 320, 240);
+ 
+	// add a white border around overlayed original image 
+	for (i = 0; i < 320; i++) {
+		display_buf[i] = 0x00FFFFFF;
+		display_buf[i + 239 * 640] = 0x00FFFFFF;
+	}
+	for (i = 0; i < 240; i++) {
+		display_buf[i * 640] = 0x00FFFFFF;
+		display_buf[319 + i * 640] = 0x00FFFFFF;
+	}
+ 
+	// VGA text labels
+	VGA_text(2, 1, "ORIGINAL");
+	VGA_text(42, 1, "DRIZZLE OUTPUT");
+ 
+	printf("Done!\n");
+	printf("Top left = original single frame (320x240)\n");
+	printf("Full screen = drizzle superresolution (640x480)\n");
+	fflush(stdout);
+}
+int load_img(const char *filename, uint32_t *out_addr, int width, int height)
+{
+	int x, y;
+	uint32_t color;
+
+	// === open 1 frame raw binary image ====================
+	FILE *fp = fopen(filename, "rb");
+	if (!fp) {
+		printf("ERROR: raw binary image fail to open...\n");
+		return(1);
+	}
+
+	for (y = 0; y < height; y++)
+	{
+		for (x = 0; x < width; x++)
+		{
+			color = 0;
+
+			if (fread(&color, 3, 1, fp) != 1) { // reads the pixel and check that the pixel was read
+				printf( "ERROR: failed to read pixel\n");
+				fclose(fp);
+				return 1;
+			}
+
+			out_addr[x + y * 320] = FILE_TO_DISPLAY_COLOR(color);
+		}
+	}
+
+	fclose(fp);
+
+	return 0;
+}
+
+int count_frames(const char *pattern) {
+	int count = 0;
+	char filename[256];
+	while (1) {
+		sprintf(filename, pattern, count + 1); 
+		FILE *fp = fopen(filename, "rb"); 
+		if (!fp) break;
+		fclose(fp); 
+		count++;
+	}
+	return count;
+}
+
+void compute_com(uint32_t *color_in, int width, int height, uint32_t *com_x_out, uint32_t *com_y_out) {
+	double sum_w = 0, sum_wx = 0, sum_wy = 0;
+	int x, y;
+	for (y = 0; y < height; y++) {
+		for (x = 0; x < width; x++) {
+			uint32_t color = color_in[x + y * width];
+			uint32_t r = (color >> 16) & 0xFF; // after FILE_TO_DISPLAY_COLOR swap
+			uint32_t g = (color >> 8) & 0xFF;
+			uint32_t b = color & 0xFF;
+
+			double brightness = r + g + b;
+			if (brightness > 10.0) {
+				sum_w += brightness;
+				sum_wx += brightness * x;
+				sum_wy += brightness * y;
+			}
+		}
+	}
+	if (sum_w > 0) {
+		double float_com_x = sum_wx/sum_w;
+		double float_com_y = sum_wy/sum_w;
+		// convert the fractional part (the shift) to 11.16 fix pt
+		// double frac_x = float_com_x - (int)float_com_x;
+		// double frac_y = float_com_y - (int)float_com_y;
+		*com_x_out = (uint32_t)(float_com_x * 65536.0); // 2^16
+		*com_y_out = (uint32_t)(float_com_y * 65536.0);
+		printf("COM calculation: (%.3f, %.3f), shift: (0x%08x, 0x%08x)\n", float_com_x, float_com_y, *com_x_out, *com_y_out);
+	} else {
+		*com_x_out = 0;
+		*com_y_out = 0;
+	}
+}
+
+void overlay_original(const char *filename, uint32_t *display_buf, int ox, int oy, int width, int height) {
+	int x, y;
+	uint32_t color;
+ 
+	FILE *fp = fopen(filename, "rb");
+	if (!fp) {
+		printf("ERROR: could not open %s for overlay\n", filename);
+		return;
+	}
+ 
+	for (y = 0; y < height; y++) {
+		for (x = 0; x < width; x++) {
+			color = 0;
+			if (fread(&color, 3, 1, fp) != 1) break;
+ 
+			int dx = ox + x;
+			int dy = oy + y;
+			if (dx >= 0 && dx < 640 && dy >= 0 && dy < 480) {
+				display_buf[dx + dy * 640] = FILE_TO_DISPLAY_COLOR(color);
+			}
+		}
+	}
+ 
+	fclose(fp);
+}
 
 /****************************************************************************************
  * Subroutine to send a string of text to the VGA monitor 
@@ -566,348 +481,5 @@ void VGA_text_clear()
 			// write to the character buffer
 			*(character_buffer + offset) = ' ';		
 		}
-	}
-}
-
-/****************************************************************************************
- * Draw a filled rectangle on the VGA monitor 
-****************************************************************************************/
-#define SWAP(X,Y) do{int temp=X; X=Y; Y=temp;}while(0) 
-
-void VGA_box(int x1, int y1, int x2, int y2, short pixel_color)
-{
-	char  *pixel_ptr ; 
-	int row, col;
-
-	/* check and fix box coordinates to be valid */
-	if (x1>639) x1 = 639;
-	if (y1>479) y1 = 479;
-	if (x2>639) x2 = 639;
-	if (y2>479) y2 = 479;
-	if (x1<0) x1 = 0;
-	if (y1<0) y1 = 0;
-	if (x2<0) x2 = 0;
-	if (y2<0) y2 = 0;
-	if (x1>x2) SWAP(x1,x2);
-	if (y1>y2) SWAP(y1,y2);
-	for (row = y1; row <= y2; row++)
-		for (col = x1; col <= x2; ++col)
-		{
-			//640x480
-			//pixel_ptr = (char *)vga_pixel_ptr + (row<<10)    + col ;
-			// set pixel color
-			//*(char *)pixel_ptr = pixel_color;	
-			VGA_PIXEL(col,row,pixel_color);	
-		}
-}
-
-/****************************************************************************************
- * Draw a outline rectangle on the VGA monitor 
-****************************************************************************************/
-#define SWAP(X,Y) do{int temp=X; X=Y; Y=temp;}while(0) 
-
-void VGA_rect(int x1, int y1, int x2, int y2, short pixel_color)
-{
-	char  *pixel_ptr ; 
-	int row, col;
-
-	/* check and fix box coordinates to be valid */
-	if (x1>639) x1 = 639;
-	if (y1>479) y1 = 479;
-	if (x2>639) x2 = 639;
-	if (y2>479) y2 = 479;
-	if (x1<0) x1 = 0;
-	if (y1<0) y1 = 0;
-	if (x2<0) x2 = 0;
-	if (y2<0) y2 = 0;
-	if (x1>x2) SWAP(x1,x2);
-	if (y1>y2) SWAP(y1,y2);
-	// left edge
-	col = x1;
-	for (row = y1; row <= y2; row++){
-		//640x480
-		//pixel_ptr = (char *)vga_pixel_ptr + (row<<10)    + col ;
-		// set pixel color
-		//*(char *)pixel_ptr = pixel_color;	
-		VGA_PIXEL(col,row,pixel_color);		
-	}
-		
-	// right edge
-	col = x2;
-	for (row = y1; row <= y2; row++){
-		//640x480
-		//pixel_ptr = (char *)vga_pixel_ptr + (row<<10)    + col ;
-		// set pixel color
-		//*(char *)pixel_ptr = pixel_color;	
-		VGA_PIXEL(col,row,pixel_color);		
-	}
-	
-	// top edge
-	row = y1;
-	for (col = x1; col <= x2; ++col){
-		//640x480
-		//pixel_ptr = (char *)vga_pixel_ptr + (row<<10)    + col ;
-		// set pixel color
-		//*(char *)pixel_ptr = pixel_color;	
-		VGA_PIXEL(col,row,pixel_color);
-	}
-	
-	// bottom edge
-	row = y2;
-	for (col = x1; col <= x2; ++col){
-		//640x480
-		//pixel_ptr = (char *)vga_pixel_ptr + (row<<10)    + col ;
-		// set pixel color
-		//*(char *)pixel_ptr = pixel_color;
-		VGA_PIXEL(col,row,pixel_color);
-	}
-}
-
-/****************************************************************************************
- * Draw a horixontal line on the VGA monitor 
-****************************************************************************************/
-#define SWAP(X,Y) do{int temp=X; X=Y; Y=temp;}while(0) 
-
-void VGA_Hline(int x1, int y1, int x2, short pixel_color)
-{
-	char  *pixel_ptr ; 
-	int row, col;
-
-	/* check and fix box coordinates to be valid */
-	if (x1>639) x1 = 639;
-	if (y1>479) y1 = 479;
-	if (x2>639) x2 = 639;
-	if (x1<0) x1 = 0;
-	if (y1<0) y1 = 0;
-	if (x2<0) x2 = 0;
-	if (x1>x2) SWAP(x1,x2);
-	// line
-	row = y1;
-	for (col = x1; col <= x2; ++col){
-		//640x480
-		//pixel_ptr = (char *)vga_pixel_ptr + (row<<10)    + col ;
-		// set pixel color
-		//*(char *)pixel_ptr = pixel_color;	
-		VGA_PIXEL(col,row,pixel_color);		
-	}
-}
-
-/****************************************************************************************
- * Draw a vertical line on the VGA monitor 
-****************************************************************************************/
-#define SWAP(X,Y) do{int temp=X; X=Y; Y=temp;}while(0) 
-
-void VGA_Vline(int x1, int y1, int y2, short pixel_color)
-{
-	char  *pixel_ptr ; 
-	int row, col;
-
-	/* check and fix box coordinates to be valid */
-	if (x1>639) x1 = 639;
-	if (y1>479) y1 = 479;
-	if (y2>479) y2 = 479;
-	if (x1<0) x1 = 0;
-	if (y1<0) y1 = 0;
-	if (y2<0) y2 = 0;
-	if (y1>y2) SWAP(y1,y2);
-	// line
-	col = x1;
-	for (row = y1; row <= y2; row++){
-		//640x480
-		//pixel_ptr = (char *)vga_pixel_ptr + (row<<10)    + col ;
-		// set pixel color
-		//*(char *)pixel_ptr = pixel_color;	
-		VGA_PIXEL(col,row,pixel_color);			
-	}
-}
-
-
-/****************************************************************************************
- * Draw a filled circle on the VGA monitor 
-****************************************************************************************/
-
-void VGA_disc(int x, int y, int r, short pixel_color)
-{
-	char  *pixel_ptr ; 
-	int row, col, rsqr, xc, yc;
-	
-	rsqr = r*r;
-	
-	for (yc = -r; yc <= r; yc++)
-		for (xc = -r; xc <= r; xc++)
-		{
-			col = xc;
-			row = yc;
-			// add the r to make the edge smoother
-			if(col*col+row*row <= rsqr+r){
-				col += x; // add the center point
-				row += y; // add the center point
-				//check for valid 640x480
-				if (col>639) col = 639;
-				if (row>479) row = 479;
-				if (col<0) col = 0;
-				if (row<0) row = 0;
-				//pixel_ptr = (char *)vga_pixel_ptr + (row<<10) + col ;
-				// set pixel color
-				//*(char *)pixel_ptr = pixel_color;
-				VGA_PIXEL(col,row,pixel_color);	
-			}
-					
-		}
-}
-
-/****************************************************************************************
- * Draw a  circle on the VGA monitor 
-****************************************************************************************/
-
-void VGA_circle(int x, int y, int r, int pixel_color)
-{
-	char  *pixel_ptr ; 
-	int row, col, rsqr, xc, yc;
-	int col1, row1;
-	rsqr = r*r;
-	
-	for (yc = -r; yc <= r; yc++){
-		//row = yc;
-		col1 = (int)sqrt((float)(rsqr + r - yc*yc));
-		// right edge
-		col = col1 + x; // add the center point
-		row = yc + y; // add the center point
-		//check for valid 640x480
-		if (col>639) col = 639;
-		if (row>479) row = 479;
-		if (col<0) col = 0;
-		if (row<0) row = 0;
-		//pixel_ptr = (char *)vga_pixel_ptr + (row<<10) + col ;
-		// set pixel color
-		//*(char *)pixel_ptr = pixel_color;
-		VGA_PIXEL(col,row,pixel_color);	
-		// left edge
-		col = -col1 + x; // add the center point
-		//check for valid 640x480
-		if (col>639) col = 639;
-		if (row>479) row = 479;
-		if (col<0) col = 0;
-		if (row<0) row = 0;
-		//pixel_ptr = (char *)vga_pixel_ptr + (row<<10) + col ;
-		// set pixel color
-		//*(char *)pixel_ptr = pixel_color;
-		VGA_PIXEL(col,row,pixel_color);	
-	}
-	for (xc = -r; xc <= r; xc++){
-		//row = yc;
-		row1 = (int)sqrt((float)(rsqr + r - xc*xc));
-		// right edge
-		col = xc + x; // add the center point
-		row = row1 + y; // add the center point
-		//check for valid 640x480
-		if (col>639) col = 639;
-		if (row>479) row = 479;
-		if (col<0) col = 0;
-		if (row<0) row = 0;
-		//pixel_ptr = (char *)vga_pixel_ptr + (row<<10) + col ;
-		// set pixel color
-		//*(char *)pixel_ptr = pixel_color;
-		VGA_PIXEL(col,row,pixel_color);	
-		// left edge
-		row = -row1 + y; // add the center point
-		//check for valid 640x480
-		if (col>639) col = 639;
-		if (row>479) row = 479;
-		if (col<0) col = 0;
-		if (row<0) row = 0;
-		//pixel_ptr = (char *)vga_pixel_ptr + (row<<10) + col ;
-		// set pixel color
-		//*(char *)pixel_ptr = pixel_color;
-		VGA_PIXEL(col,row,pixel_color);	
-	}
-}
-
-// =============================================
-// === Draw a line
-// =============================================
-//plot a line 
-//at x1,y1 to x2,y2 with color 
-//Code is from David Rodgers,
-//"Procedural Elements of Computer Graphics",1985
-void VGA_line(int x1, int y1, int x2, int y2, short c) {
-	int e;
-	signed int dx,dy,j, temp;
-	signed int s1,s2, xchange;
-     signed int x,y;
-	char *pixel_ptr ;
-	
-	/* check and fix line coordinates to be valid */
-	if (x1>639) x1 = 639;
-	if (y1>479) y1 = 479;
-	if (x2>639) x2 = 639;
-	if (y2>479) y2 = 479;
-	if (x1<0) x1 = 0;
-	if (y1<0) y1 = 0;
-	if (x2<0) x2 = 0;
-	if (y2<0) y2 = 0;
-        
-	x = x1;
-	y = y1;
-	
-	//take absolute value
-	if (x2 < x1) {
-		dx = x1 - x2;
-		s1 = -1;
-	}
-
-	else if (x2 == x1) {
-		dx = 0;
-		s1 = 0;
-	}
-
-	else {
-		dx = x2 - x1;
-		s1 = 1;
-	}
-
-	if (y2 < y1) {
-		dy = y1 - y2;
-		s2 = -1;
-	}
-
-	else if (y2 == y1) {
-		dy = 0;
-		s2 = 0;
-	}
-
-	else {
-		dy = y2 - y1;
-		s2 = 1;
-	}
-
-	xchange = 0;   
-
-	if (dy>dx) {
-		temp = dx;
-		dx = dy;
-		dy = temp;
-		xchange = 1;
-	} 
-
-	e = ((int)dy<<1) - dx;  
-	 
-	for (j=0; j<=dx; j++) {
-		//video_pt(x,y,c); //640x480
-		//pixel_ptr = (char *)vga_pixel_ptr + (y<<10)+ x; 
-		// set pixel color
-		//*(char *)pixel_ptr = c;
-		VGA_PIXEL(x,y,c);			
-		 
-		if (e>=0) {
-			if (xchange==1) x = x + s1;
-			else y = y + s2;
-			e = e - ((int)dx<<1);
-		}
-
-		if (xchange==1) y = y + s2;
-		else x = x + s1;
-
-		e = e + ((int)dy<<1);
 	}
 }
